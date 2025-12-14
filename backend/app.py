@@ -1,6 +1,11 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+CORS(app, resources={
+    r"/api/*": {"origins": ["https://predizioni-sito.netlify.app"]}
+})
+
+
 from sqlalchemy import create_engine, Column, Integer, String, or_
 from sqlalchemy.orm import sessionmaker, declarative_base
 
