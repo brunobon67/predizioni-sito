@@ -1,32 +1,49 @@
+# =============================
+# Imports base
+# =============================
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-CORS(app, resources={
-    r"/api/*": {"origins": ["https://predizioni-sito.netlify.app"]}
-})
-
-
-from sqlalchemy import create_engine, Column, Integer, String, or_
+import os
+from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# -----------------------------
-# Configurazione Flask
-# -----------------------------
+# =============================
+# Flask app
+# =============================
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# -----------------------------
-# Configurazione DATABASE (SQLite)
-# -----------------------------
-DATABASE_URL = "sqlite:///calcio.db"
+# =============================
+# CORS (Netlify + locale)
+# =============================
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "https://predizioni-sito.netlify.app",
+            "http://localhost:5500",
+            "http://127.0.0.1:5500"
+        ]
+    }
+})
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+# =============================
+# Database config (SQLite locale / Postgres Render)
+# =============================
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///calcio.db")
 
+# Render può fornire postgres:// (deprecato)
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
+
 
 
 class Match(Base):
