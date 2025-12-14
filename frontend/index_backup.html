@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calcio Predictions</title>
+    <link rel="stylesheet" href="styles.css" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+</head>
+<body>
+    <!-- HEADER + MENU -->
+    <header class="header">
+        <div class="logo">
+            <span>CalcioPredict</span>
+        </div>
+        <nav class="nav">
+            <ul>
+                <li><a href="#home" class="nav-link active">Home</a></li>
+                <li><a href="#stats" class="nav-link">Statistiche</a></li>
+                <li><a href="#predictions" class="nav-link">Previsioni</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <!-- SEZIONE HOME / LANDING -->
+    <section id="home" class="hero">
+        <div class="hero-content">
+            <h1>Predizioni intelligenti per le partite di calcio</h1>
+            <p>
+                Analizziamo dati storici, statistiche avanzate e modelli predittivi per aiutarti a
+                capire meglio le probabilità di ogni partita.
+            </p>
+            <button id="cta-button" class="primary-button">
+                Inizia ora
+            </button>
+        </div>
+    </section>
+
+    <!-- SEZIONE SINTETICA: COSA FA IL SITO -->
+    <section id="overview" class="section section-light">
+        <div class="section-inner">
+            <h2>Cosa puoi fare con CalcioPredict</h2>
+            <div class="cards">
+                <div class="card">
+                    <h3>Esplora Statistiche</h3>
+                    <p>
+                        Consulta statistiche dettagliate su squadre, risultati, trend recenti
+                        e prestazioni in casa/trasferta.
+                    </p>
+                </div>
+                <div class="card">
+                    <h3>Confronta Modelli</h3>
+                    <p>
+                        Scegli tra diversi modelli predittivi e confronta le probabilità di
+                        vittoria, pareggio e sconfitta.
+                    </p>
+                </div>
+                <div class="card">
+                    <h3>Analizza Partite Future</h3>
+                    <p>
+                        Seleziona le partite in programma, scegli la competizione e visualizza
+                        le probabilità calcolate dai tuoi modelli.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SEZIONE STATISTICHE -->
+       <section id="stats" class="section">
+        <div class="section-inner">
+            <h2>Statistiche</h2>
+            <p class="section-description">
+                Le statistiche sono calcolate sulle partite già disputate
+                (<strong>storico</strong>). Inserisci una squadra, scegli se filtrare per
+                competizione e visualizza vittorie, pareggi, sconfitte e goal.
+            </p>
+
+         <div class="filters">
+    <div class="filter-group">
+    <label for="stats-competition">Competizione</label>
+<select id="stats-competition">
+    <option value="">Tutte le competizioni</option>
+    <option value="Serie A">Serie A</option>
+    <option value="Premier League">Premier League</option>
+    <option value="La Liga">La Liga</option>
+</select>
+
+    </div>
+    <div class="filter-group">
+        <label for="stats-season">Stagione</label>
+        <select id="stats-season">
+            <option value="">Tutte le stagioni</option>
+            <option value="2024">2024-2025</option>
+            <option value="2025">2025-2026</option>
+        </select>
+    </div>
+    <div class="filter-group">
+        <label for="stats-team">Squadra</label>
+        <input id="stats-team" type="text" placeholder="Es. Juventus FC" />
+    </div>
+</div>
+
+
+            <button id="stats-button" class="primary-button secondary-button">
+                Calcola statistiche
+            </button>
+            <p id="stats-message" class="prediction-message"></p>
+
+            <div class="stats-results placeholder-box">
+                <h3>Risultati</h3>
+                <p><strong>Squadra:</strong> <span id="stats-team-name">-</span></p>
+<p><strong>Competizione:</strong> <span id="stats-competition-name">Tutte</span></p>
+<p><strong>Stagione:</strong> <span id="stats-season-name">Tutte</span></p>
+<p><strong>Partite giocate:</strong> <span id="stats-played">0</span></p>
+
+                <p><strong>Vittorie:</strong> <span id="stats-wins">0</span></p>
+                <p><strong>Pareggi:</strong> <span id="stats-draws">0</span></p>
+                <p><strong>Sconfitte:</strong> <span id="stats-losses">0</span></p>
+                <p><strong>Goal fatti:</strong> <span id="stats-goals-for">0</span></p>
+                <p><strong>Goal subiti:</strong> <span id="stats-goals-against">0</span></p>
+                <p>
+
+<hr />
+
+<h3>Statistiche avanzate</h3>
+<div class="stats-advanced-grid">
+  <!-- GOAL / MEDIE -->
+  <div class="stats-card">
+    <h4>Goal & Medie</h4>
+    <p><strong>Gol fatti:</strong> <span id="stats-adv-gf">0</span></p>
+    <p><strong>Gol subiti:</strong> <span id="stats-adv-ga">0</span></p>
+    <p><strong>Differenza reti:</strong> <span id="stats-adv-gd">0</span></p>
+    <p><strong>Media gol fatti:</strong> <span id="stats-avg-gf">0.00</span></p>
+    <p><strong>Media gol subiti:</strong> <span id="stats-avg-ga">0.00</span></p>
+  </div>
+
+<div class="stats-card">
+  <h4>Vs Top / Bottom (rank al momento)</h4>
+
+  <p style="margin-bottom:0.6rem; color:#64748b;">
+    Calcolato usando la posizione in classifica <strong>prima</strong> di ogni partita.
+  </p>
+
+  <p><strong>Vs Top <span id="vs-top-n">6</span>:</strong>
+    <span id="vs-top-wdl">0W-0D-0L</span>
+    — Win <span id="vs-top-winrate">0.0%</span>
+    (match: <span id="vs-top-matches">0</span>)
+  </p>
+
+  <p><strong>Vs Bottom <span id="vs-bottom-n">5</span>:</strong>
+    <span id="vs-bottom-wdl">0W-0D-0L</span>
+    — Win <span id="vs-bottom-winrate">0.0%</span>
+    (match: <span id="vs-bottom-matches">0</span>)
+  </p>
+
+  <p style="margin-top:0.6rem; color:#64748b;">
+    Bottom = rank ≥ <span id="vs-bottom-threshold">-</span> su <span id="vs-total-teams">-</span> squadre.
+  </p>
+</div>
+
+
+  <!-- OVER / UNDER / BTTS -->
+  <div class="stats-card">
+    <h4>Over / Under & BTTS</h4>
+    <p><strong>Partite Over 2.5:</strong> <span id="stats-over25">0</span> (<span id="stats-over25-rate">0.0%</span>)</p>
+    <p><strong>Partite Under 2.5:</strong> <span id="stats-under25">0</span> (<span id="stats-under25-rate">0.0%</span>)</p>
+    <p><strong>Partite BTTS (entrambe segnano):</strong> <span id="stats-btts">0</span> (<span id="stats-btts-rate">0.0%</span>)</p>
+  </div>
+
+  <!-- CASA / TRASFERTA -->
+  <div class="stats-card">
+    <h4>Casa vs Trasferta</h4>
+    <p><strong>Partite in casa:</strong> <span id="stats-home-matches">0</span></p>
+    <p><strong>Gol fatti in casa:</strong> <span id="stats-home-gf">0</span> (media <span id="stats-home-avg-gf">0.00</span>)</p>
+    <p><strong>Gol subiti in casa:</strong> <span id="stats-home-ga">0</span> (media <span id="stats-home-avg-ga">0.00</span>)</p>
+    <p><strong>Partite in trasferta:</strong> <span id="stats-away-matches">0</span></p>
+    <p><strong>Gol fatti fuori casa:</strong> <span id="stats-away-gf">0</span> (media <span id="stats-away-avg-gf">0.00</span>)</p>
+    <p><strong>Gol subiti fuori casa:</strong> <span id="stats-away-ga">0</span> (media <span id="stats-away-avg-ga">0.00</span>)</p>
+  </div>
+
+  <!-- FORMA RECENTE -->
+  <div class="stats-card">
+    <h4>Forma recente</h4>
+    <p><strong>Ultime 5 partite:</strong> <span id="stats-form5-record">0W-0D-0L</span></p>
+    <p><strong>Punti (ultime 5):</strong> <span id="stats-form5-points">0</span></p>
+    <p><strong>Gol fatti (ultime 5):</strong> <span id="stats-form5-gf">0</span></p>
+    <p><strong>Gol subiti (ultime 5):</strong> <span id="stats-form5-ga">0</span></p>
+    <p><strong>Ultime 10 partite:</strong> <span id="stats-form10-record">0W-0D-0L</span></p>
+    <p><strong>Punti (ultime 10):</strong> <span id="stats-form10-points">0</span></p>
+    <p><strong>Gol fatti (ultime 10):</strong> <span id="stats-form10-gf">0</span></p>
+    <p><strong>Gol subiti (ultime 10):</strong> <span id="stats-form10-ga">0</span></p>
+  </div>
+</div>
+
+
+                    <strong>Win rate in casa:</strong>
+                    <span id="stats-home-rate">0 %</span>
+                </p>
+                <p>
+                    <strong>Win rate in trasferta:</strong>
+                    <span id="stats-away-rate">0 %</span>
+                </p>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- SEZIONE PREVISIONI -->
+    <section id="predictions" class="section section-light">
+        <div class="section-inner">
+            <h2>Previsioni</h2>
+            <p class="section-description">
+                In questa sezione l’utente potrà scegliere una partita futura, selezionare la
+                competizione e il modello predittivo, e visualizzare le probabilità
+                accompagnate da una spiegazione chiara.
+            </p>
+
+            <!-- Filtri per previsioni -->
+            <div class="filters">
+                <div class="filter-group">
+                    <label for="pred-competition">Competizione</label>
+                    <select id="pred-competition">
+                        <option value="">Tutte le competizioni</option>
+                        <!-- verrà popolato da JS -->
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="pred-match">Partita</label>
+                    <select id="pred-match">
+                        <option value="">Seleziona partita</option>
+                        <!-- verrà popolato da JS -->
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="pred-model">Modello predittivo</label>
+                    <select id="pred-model">
+                        <option value="">Seleziona modello</option>
+                        <option value="modello_base">Modello base</option>
+                        <option value="modello_avanzato">Modello avanzato</option>
+                        <option value="modello_meteo_forma">Modello meteo + forma</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Bottone per calcolare previsioni -->
+            <button id="predict-button" class="primary-button secondary-button">
+                Calcola previsioni
+            </button>
+            <p id="prediction-message" class="prediction-message"></p>
+
+            <!-- Risultato delle previsioni -->
+            <div class="predictions-output">
+                <div class="predictions-probabilities placeholder-box">
+                    <h3>Probabilità previste</h3>
+                    <ul>
+                        <li><strong>Vittoria Casa:</strong> <span id="prob-home">– %</span></li>
+                        <li><strong>Pareggio:</strong> <span id="prob-draw">– %</span></li>
+                        <li><strong>Vittoria Trasferta:</strong> <span id="prob-away">– %</span></li>
+                    </ul>
+                </div>
+                <div class="predictions-explanation placeholder-box">
+                    <h3>Spiegazione del modello</h3>
+                    <p id="prediction-explanation-text">
+                        Qui comparirà una spiegazione testuale delle probabilità, ad esempio:
+                        “Il modello considera la forma recente, i risultati testa-a-testa e il
+                        vantaggio casalingo. La squadra di casa ha vinto 4 delle ultime 5 partite
+                        in casa, mentre la squadra in trasferta ha segnato poco nelle ultime
+                        giornate.”
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+        <p>© <span id="year"></span> CalcioPredict – Tutti i diritti riservati</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
+

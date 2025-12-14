@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CalcioPredizioni</title>
+
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+<header class="header">
+  <div class="container navbar">
+    <div class="brand">
+      <span class="brand-name">CalcioPredizioni</span>
+    </div>
+
+    <nav class="navlinks">
+      <a href="#home" class="nav-link active">Home</a>
+      <a href="#stats" class="nav-link">Statistiche</a>
+      <a href="#standings" class="nav-link">Classifica</a>
+      <a href="#predictions" class="nav-link">Previsioni</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- HERO -->
+<section id="home" class="hero">
+  <div class="container hero-inner">
+    <h1 class="hero-title">Analisi calcistiche, senza complicazioni.</h1>
+    <p class="hero-tagline">
+      Statistiche avanzate, contesto reale delle partite e previsioni spiegate in modo chiaro.
+    </p>
+
+    <button id="start-button" class="btn btn-primary">
+      Inizia ora
+    </button>
+  </div>
+</section>
+
+<!-- COSA PUOI FARE -->
+<section id="overview" class="section">
+  <div class="container">
+    <div class="section-head centered">
+      <h2 class="section-title">Cosa puoi fare</h2>
+      <p class="section-subtitle">
+        Tutto ciò che ti serve per analizzare una partita in pochi secondi.
+      </p>
+    </div>
+
+    <div class="tiles tiles-3">
+      <a class="tile" href="#stats">
+        <div class="tile-icon">📊</div>
+        <h3 class="tile-title">Statistiche</h3>
+        <p class="tile-desc">
+          Analizza risultati totali, in casa o in trasferta con indicatori avanzati.
+        </p>
+        <span class="tile-cta">Vai alle statistiche →</span>
+      </a>
+
+      <a class="tile" href="#standings">
+        <div class="tile-icon">🏆</div>
+        <h3 class="tile-title">Classifica dinamica</h3>
+        <p class="tile-desc">
+          Scopri la classifica reale di una lega in qualsiasi momento della stagione.
+        </p>
+        <span class="tile-cta">Vai alla classifica →</span>
+      </a>
+
+      <a class="tile" href="#predictions">
+        <div class="tile-icon">⚡</div>
+        <h3 class="tile-title">Previsioni</h3>
+        <p class="tile-desc">
+          Visualizza probabilità di vittoria con spiegazione del contesto.
+        </p>
+        <span class="tile-cta">Vai alle previsioni →</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- STATISTICHE -->
+<section id="stats" class="section section-soft">
+  <div class="container">
+
+    <div class="section-head">
+      <h2 class="section-title">Statistiche</h2>
+      <p class="section-subtitle">
+        Tutti i dati sono calcolati sulle partite già disputate.
+      </p>
+    </div>
+
+    <!-- FILTRI -->
+    <div class="panel">
+      <h3 class="panel-title">Filtri di analisi</h3>
+
+      <div class="form-grid form-grid-4">
+        <div class="field">
+          <label>Competizione</label>
+          <select id="stats-competition">
+            <option value="">Tutte</option>
+            <option value="Serie A">Serie A</option>
+            <option value="Premier League">Premier League</option>
+            <option value="La Liga">La Liga</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Stagione</label>
+          <select id="stats-season">
+            <option value="">Tutte</option>
+            <option value="2024">2024/25</option>
+            <option value="2025">2025/26</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Squadra</label>
+          <select id="stats-team">
+            <option value="">Seleziona squadra</option>
+          </select>
+        </div>
+
+        <div class="field field-actions">
+          <button id="stats-button" class="btn btn-primary btn-block">
+            Calcola statistiche
+          </button>
+        </div>
+      </div>
+    </div>
+
+        <!-- Results -->
+        <div class="panel">
+          <div class="panel-head">
+            <div class="result-title">
+              <div>
+                <h3 class="panel-title">Risultati</h3>
+                <p class="panel-subtitle">
+                  <span class="pill">Squadra: <b id="stats-team-name">-</b></span>
+                  <span class="pill">Competizione: <b id="stats-competition-name">Tutte</b></span>
+                  <span class="pill">Stagione: <b id="stats-season-name">Tutte</b></span>
+                </p>
+              </div>
+
+              <span class="pill pill-strong">
+                Partite: <b id="stats-played">0</b>
+              </span>
+            </div>
+          </div>
+
+          <!-- Quick view toggle -->
+          <div class="segmented" role="tablist" aria-label="Filtro Totale/Casa/Trasferta">
+            <button id="view-overall" class="seg-btn active" type="button">Totale</button>
+            <button id="view-home" class="seg-btn" type="button">Casa</button>
+            <button id="view-away" class="seg-btn" type="button">Trasferta</button>
+          </div>
+
+          <!-- KPI: stessi blocchi per tutte le viste -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Vittorie</div>
+              <div class="kpi-value" id="stats-wins">0</div>
+              <div class="kpi-sub">Win%: <b id="stats-win-rate">0.0%</b></div>
+              <div class="bar"><div id="bar-wins" class="bar-fill"></div></div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-label">Pareggi</div>
+              <div class="kpi-value" id="stats-draws">0</div>
+              <div class="kpi-sub">Draw%: <b id="stats-draw-rate">0.0%</b></div>
+              <div class="bar"><div id="bar-draws" class="bar-fill"></div></div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-label">Sconfitte</div>
+              <div class="kpi-value" id="stats-losses">0</div>
+              <div class="kpi-sub">Loss%: <b id="stats-loss-rate">0.0%</b></div>
+              <div class="bar"><div id="bar-losses" class="bar-fill"></div></div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-label">Goal</div>
+              <div class="kpi-value"><span id="stats-goals-for">0</span></div>
+              <div class="mini">Subiti: <b id="stats-goals-against">0</b></div>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- VS Top/Bottom: stesso blocco per tutte le viste -->
+          <div class="mini-panel">
+            <h4>Vs Top / Bottom (rank al momento)</h4>
+            <p class="muted">
+              Basato sulla posizione dell’avversario in classifica <b>prima</b> della partita.
+            </p>
+
+            <div class="vs-grid">
+              <div class="vs-box">
+                <div class="vs-title">Vs Top <span id="vs-top-n">6</span></div>
+                <div class="vs-line"><span id="vs-top-wdl">0W-0D-0L</span></div>
+                <div class="vs-sub">Win rate: <b id="vs-top-winrate">0.0%</b> — match: <b id="vs-top-matches">0</b></div>
+              </div>
+
+              <div class="vs-box">
+                <div class="vs-title">Vs Bottom <span id="vs-bottom-n">5</span></div>
+                <div class="vs-line"><span id="vs-bottom-wdl">0W-0D-0L</span></div>
+                <div class="vs-sub">Win rate: <b id="vs-bottom-winrate">0.0%</b> — match: <b id="vs-bottom-matches">0</b></div>
+              </div>
+            </div>
+
+            <div class="muted tiny">
+              Bottom = rank ≥ <b id="vs-bottom-threshold">-</b> su <b id="vs-total-teams">-</b> squadre.
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <h3 class="subsection-title">Statistiche avanzate</h3>
+
+          <div class="stats-advanced-grid">
+            <div class="stats-card">
+              <h4>Goal & medie</h4>
+              <p><strong>GF:</strong> <span id="stats-adv-gf">0</span></p>
+              <p><strong>GA:</strong> <span id="stats-adv-ga">0</span></p>
+              <p><strong>Diff:</strong> <span id="stats-adv-gd">0</span></p>
+              <p><strong>Media GF:</strong> <span id="stats-avg-gf">0.00</span></p>
+              <p><strong>Media GA:</strong> <span id="stats-avg-ga">0.00</span></p>
+            </div>
+
+            <div class="stats-card">
+              <h4>Under / Over 2,5 & BTTS</h4>
+              <p><strong>Over 2.5:</strong> <span id="stats-over25">0</span> (<span id="stats-over25-rate">0.0%</span>)</p>
+              <p><strong>Under 2.5:</strong> <span id="stats-under25">0</span> (<span id="stats-under25-rate">0.0%</span>)</p>
+              <p><strong>BTTS:</strong> <span id="stats-btts">0</span> (<span id="stats-btts-rate">0.0%</span>)</p>
+            </div>
+
+            <div class="stats-card">
+              <h4>Forma recente</h4>
+              <p><strong>Last 5:</strong> <span id="stats-form5-record">0W-0D-0L</span></p>
+              <p><strong>Punti (5):</strong> <span id="stats-form5-points">0</span></p>
+              <p><strong>GF (5):</strong> <span id="stats-form5-gf">0</span></p>
+              <p><strong>GA (5):</strong> <span id="stats-form5-ga">0</span></p>
+              <p><strong>Last 10:</strong> <span id="stats-form10-record">0W-0D-0L</span></p>
+              <p><strong>Punti (10):</strong> <span id="stats-form10-points">0</span></p>
+              <p><strong>GF (10):</strong> <span id="stats-form10-gf">0</span></p>
+              <p><strong>GA (10):</strong> <span id="stats-form10-ga">0</span></p>
+            </div>
+
+            <div class="stats-card">
+              <h4>Note</h4>
+              <p class="muted">
+                Cambia il filtro <b>Totale / Casa / Trasferta</b> per vedere la stessa analisi applicata a quel contesto.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STANDINGS -->
+    <section id="standings" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="section-title">Classifica dinamica</h2>
+          <p class="section-subtitle">
+            Inserisci una data e vedi la classifica com’era fino a quel giorno.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="form-grid standings-grid">
+            <div class="field">
+              <label for="standings-competition">Competizione</label>
+              <select id="standings-competition">
+                <option value="">Seleziona</option>
+                <option value="Serie A">Serie A</option>
+                <option value="Premier League">Premier League</option>
+                <option value="La Liga">La Liga</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="standings-season">Stagione</label>
+              <select id="standings-season">
+                <option value="">Seleziona</option>
+                <option value="2024">2024-2025</option>
+                <option value="2025">2025-2026</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="standings-date">Data</label>
+              <input id="standings-date" type="date" />
+              <div class="hint">Consiglio: prova una data a metà stagione.</div>
+            </div>
+
+            <div class="field field-actions">
+              <button id="standings-button" class="btn btn-primary btn-block">Mostra classifica</button>
+              <p id="standings-message" class="message"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">
+              Classifica: <span id="standings-title">—</span>
+            </h3>
+            <p class="panel-subtitle" id="standings-subtitle">—</p>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Squadra</th>
+                  <th>PT</th>
+                  <th>G</th>
+                  <th>V</th>
+                  <th>N</th>
+                  <th>P</th>
+                  <th>GF</th>
+                  <th>GA</th>
+                  <th>DR</th>
+                </tr>
+              </thead>
+              <tbody id="standings-body">
+                <tr><td colspan="10" class="muted">Nessun dato. Seleziona filtri e premi “Mostra classifica”.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PREDICTIONS -->
+    <section id="predictions" class="section section-soft">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="section-title">Previsioni</h2>
+          <p class="section-subtitle">Scegli una partita futura, un modello e ottieni probabilità + spiegazione.</p>
+        </div>
+
+        <div class="panel">
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label for="pred-competition">Competizione</label>
+              <select id="pred-competition">
+                <option value="">Tutte</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="pred-match">Partita</label>
+              <select id="pred-match">
+                <option value="">Seleziona match</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="pred-model">Modello</label>
+              <select id="pred-model">
+                <option value="">Seleziona modello</option>
+                <option value="modello_base">Base</option>
+                <option value="modello_avanzato">Avanzato</option>
+                <option value="modello_meteo_forma">Meteo + forma</option>
+              </select>
+            </div>
+
+            <div class="field field-actions">
+              <button id="predict-button" class="btn btn-primary btn-block">Calcola previsione</button>
+              <p id="prediction-message" class="message"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pred-grid">
+          <div class="panel">
+            <h3 class="panel-title">Probabilità</h3>
+
+            <div class="prob-row">
+              <div class="prob-head"><span>Vittoria casa</span><b id="prob-home">– %</b></div>
+              <div class="bar"><div id="prob-home-bar" class="bar-fill"></div></div>
+            </div>
+
+            <div class="prob-row">
+              <div class="prob-head"><span>Pareggio</span><b id="prob-draw">– %</b></div>
+              <div class="bar"><div id="prob-draw-bar" class="bar-fill"></div></div>
+            </div>
+
+            <div class="prob-row">
+              <div class="prob-head"><span>Vittoria trasferta</span><b id="prob-away">– %</b></div>
+              <div class="bar"><div id="prob-away-bar" class="bar-fill"></div></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h3 class="panel-title">Spiegazione</h3>
+            <p id="prediction-explanation-text" class="explain">La spiegazione apparirà qui.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <p>© <span id="year"></span> CalcioPredizioni</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
