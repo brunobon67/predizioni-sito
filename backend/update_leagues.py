@@ -1,11 +1,17 @@
+import os
 import requests
 from app import Match, SessionLocal
 
-# ⚠️ METTI QUI LA STESSA API KEY CHE HAI GIÀ USATO
-API_KEY = "deebeb24e4fe4b1fbe53c5634108c440"
+API_KEY = os.getenv("FOOTBALL_DATA_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Missing FOOTBALL_DATA_API_KEY env var")
 
 BASE_URL = "https://api.football-data.org/v4/competitions/{code}/matches"
-HEADERS = {"X-Auth-Token": API_KEY}
+HEADERS = {
+    "X-Auth-Token": API_KEY
+}
+
+
 
 # Leghe che vogliamo importare
 LEAGUES = [
@@ -35,18 +41,15 @@ def fetch_matches(league_code: str, season: int):
     url = BASE_URL.format(code=league_code)
     params = {"season": season}
 
-    response = requests.get(url, headers=HEADERS, params=params)
+    response = requests.get(url, headers=HEADERS, params=params, timeout=30)
 
     if response.status_code != 200:
-        print(
-            f"❌ Errore API per {league_code} {season}:",
-            response.status_code,
-            response.text,
-        )
+        print(f"❌ Errore API per {league_code} {season}:", response.status_code, response.text)
         return None
 
     data = response.json()
     return data.get("matches", [])
+
 
 
 def import_matches(matches, competition_name: str, season: int):

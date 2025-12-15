@@ -1,16 +1,20 @@
+import os
 import requests
 from app import Match, SessionLocal
 
-API_KEY = "deebeb24e4fe4b1fbe53c5634108c440"
+API_KEY = os.getenv("FOOTBALL_DATA_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Missing FOOTBALL_DATA_API_KEY env var")
 
 BASE_URL = "https://api.football-data.org/v4/competitions/SA/matches"
 HEADERS = {"X-Auth-Token": API_KEY}
+
 
 def fetch_matches(season):
     print(f"🔄 Recupero partite Serie A stagione {season}...")
     url = f"{BASE_URL}?season={season}"
 
-    response = requests.get(url, headers=HEADERS)
+response = requests.get(url, headers=HEADERS, timeout=30)
 
     if response.status_code != 200:
         print("❌ Errore API:", response.status_code, response.text)
