@@ -1,5 +1,3 @@
-[build]
-functions = "netlify/functions"
-
 [functions."update-matches"]
 schedule = "@daily"
+
