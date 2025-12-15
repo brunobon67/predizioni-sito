@@ -759,12 +759,9 @@ def predict_match():
         session.close()
 
 
-if __name__ == "__main__":
-    app.run(debug=True)
-
-
 import subprocess
-from flask import request
+import sys
+from pathlib import Path
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
@@ -776,10 +773,12 @@ def update_matches():
         return jsonify({"error": "unauthorized"}), 401
 
     try:
-        subprocess.run(
-            ["python", "backend/update_leagues.py"],
-            check=True
-        )
+        script_path = Path(__file__).resolve().parent / "update_leagues.py"
+        subprocess.run([sys.executable, str(script_path)], check=True)
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
