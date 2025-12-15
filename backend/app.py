@@ -761,3 +761,25 @@ def predict_match():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+import subprocess
+from flask import request
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+@app.post("/api/admin/update-matches")
+def update_matches():
+    token = request.headers.get("X-Admin-Token")
+
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        subprocess.run(
+            ["python", "backend/update_leagues.py"],
+            check=True
+        )
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
