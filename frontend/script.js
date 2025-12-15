@@ -1,4 +1,7 @@
-const API_BASE_URL = "https://predizioni-sito.onrender.com";
+const API_BASE_URL =
+  location.hostname.includes("netlify.app")
+    ? "https://predizioni-sito.onrender.com"
+    : "http://127.0.0.1:5000";
 let lastStatsData = null;
 let currentView = "overall";
 
