@@ -14,7 +14,7 @@ def fetch_matches(season):
     print(f"🔄 Recupero partite Serie A stagione {season}...")
     url = f"{BASE_URL}?season={season}"
 
-response = requests.get(url, headers=HEADERS, timeout=30)
+    response = requests.get(url, headers=HEADERS, timeout=30)
 
     if response.status_code != 200:
         print("❌ Errore API:", response.status_code, response.text)
@@ -22,6 +22,7 @@ response = requests.get(url, headers=HEADERS, timeout=30)
 
     data = response.json()
     return data.get("matches", [])
+
 
 
 def convert_status(api_status):
