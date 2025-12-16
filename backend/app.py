@@ -774,8 +774,8 @@ def update_matches():
 
     try:
         script_path = Path(__file__).resolve().parent / "update_leagues.py"
-        subprocess.run([sys.executable, str(script_path)], check=True)
-        return jsonify({"status": "ok"}), 200
+        subprocess.Popen([sys.executable, str(script_path)])
+        return jsonify({"status": "started"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
