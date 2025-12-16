@@ -45,7 +45,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-
 class Match(Base):
     __tablename__ = "matches"
 
@@ -340,10 +339,25 @@ def get_stats():
         home_gf = home_ga = 0
         away_gf = away_ga = 0
 
-        # Over/Under & BTTS (overall)
+        # ---------- NUOVE STATS: Over/Under multi-line ----------
+        OU_LINES = [0.5, 1.5, 2.5, 3.5, 4.5]
+
+        def init_ou_dict():
+            return {line: {"over": 0, "under": 0} for line in OU_LINES}
+
+        ou_overall = init_ou_dict()
+        ou_home = init_ou_dict()
+        ou_away = init_ou_dict()
+
+        # ---------- Failed to score ----------
+        fts = 0
+        home_fts = 0
+        away_fts = 0
+
+        # Over/Under & BTTS (legacy overall: 2.5)
         over_25 = under_25 = btts = 0
 
-        # Over/Under & BTTS (home/away split)
+        # Over/Under & BTTS (legacy home/away split: 2.5)
         home_over_25 = home_under_25 = home_btts = 0
         away_over_25 = away_under_25 = away_btts = 0
 
@@ -359,8 +373,9 @@ def get_stats():
         for m in matches:
             hg = m.home_goals or 0
             ag = m.away_goals or 0
+            total_goals = hg + ag
 
-            # goals
+            # goals (from team perspective)
             if m.home_team == team:
                 gf, ga = hg, ag
                 is_home_game = True
@@ -370,6 +385,14 @@ def get_stats():
 
             goals_scored += gf
             goals_conceded += ga
+
+            # Failed to score
+            if gf == 0:
+                fts += 1
+                if is_home_game:
+                    home_fts += 1
+                else:
+                    away_fts += 1
 
             # W/D/L
             if gf > ga:
@@ -412,8 +435,22 @@ def get_stats():
                 away_ga += ga
                 away_matches_list.append(m)
 
-            # Over/Under 2.5 (overall)
-            if (hg + ag) > 2.5:
+            # ---------- Over/Under multi-line (overall + split) ----------
+            for line in OU_LINES:
+                if total_goals > line:
+                    ou_overall[line]["over"] += 1
+                else:
+                    ou_overall[line]["under"] += 1
+
+            target = ou_home if is_home_game else ou_away
+            for line in OU_LINES:
+                if total_goals > line:
+                    target[line]["over"] += 1
+                else:
+                    target[line]["under"] += 1
+
+            # ---------- Legacy Over/Under 2.5 (overall) ----------
+            if total_goals > 2.5:
                 over_25 += 1
             else:
                 under_25 += 1
@@ -422,16 +459,16 @@ def get_stats():
             if hg > 0 and ag > 0:
                 btts += 1
 
-            # split over/under + btts
+            # legacy split over/under + btts
             if is_home_game:
-                if (hg + ag) > 2.5:
+                if total_goals > 2.5:
                     home_over_25 += 1
                 else:
                     home_under_25 += 1
                 if hg > 0 and ag > 0:
                     home_btts += 1
             else:
-                if (hg + ag) > 2.5:
+                if total_goals > 2.5:
                     away_over_25 += 1
                 else:
                     away_under_25 += 1
@@ -442,6 +479,7 @@ def get_stats():
         goal_difference = goals_scored - goals_conceded
         avg_scored = goals_scored / matches_played if matches_played else 0.0
         avg_conceded = goals_conceded / matches_played if matches_played else 0.0
+        avg_total_goals = (goals_scored + goals_conceded) / matches_played if matches_played else 0.0
 
         # rates overall
         win_rate = wins / matches_played if matches_played else 0.0
@@ -456,6 +494,9 @@ def get_stats():
         away_win_rate = away_wins / away_matches if away_matches else 0.0
         away_draw_rate = away_draws / away_matches if away_matches else 0.0
         away_loss_rate = away_losses / away_matches if away_matches else 0.0
+
+        home_avg_total_goals = (home_gf + home_ga) / home_matches if home_matches else 0.0
+        away_avg_total_goals = (away_gf + away_ga) / away_matches if away_matches else 0.0
 
         # form (overall)
         def form_block(last_n: int):
@@ -527,15 +568,33 @@ def get_stats():
         away_form_last_10 = form_block_from(away_results_sequence, away_matches_list, 10)
 
         # helpers
-        def pack_over_under(o, u, b, mp):
-            return {
-                "over_25": o,
-                "under_25": u,
-                "btts": b,
-                "over_25_rate": (o / mp) if mp else 0.0,
-                "under_25_rate": (u / mp) if mp else 0.0,
-                "btts_rate": (b / mp) if mp else 0.0,
+        def pack_over_under_multiline(ou_dict, mp, btts_count, legacy_over25=None, legacy_under25=None):
+            out = {
+                "btts": btts_count,
+                "btts_rate": (btts_count / mp) if mp else 0.0,
+                "lines": {}
             }
+
+            for line, v in ou_dict.items():
+                over_cnt = v["over"]
+                under_cnt = v["under"]
+                key = str(line).replace(".", "_")  # 2.5 -> "2_5"
+                out["lines"][key] = {
+                    "line": line,
+                    "over": over_cnt,
+                    "under": under_cnt,
+                    "over_rate": (over_cnt / mp) if mp else 0.0,
+                    "under_rate": (under_cnt / mp) if mp else 0.0,
+                }
+
+            # retrocompat: over_25 / under_25
+            if legacy_over25 is not None and legacy_under25 is not None:
+                out["over_25"] = legacy_over25
+                out["under_25"] = legacy_under25
+                out["over_25_rate"] = (legacy_over25 / mp) if mp else 0.0
+                out["under_25_rate"] = (legacy_under25 / mp) if mp else 0.0
+
+            return out
 
         stats = {
             "team": team,
@@ -550,7 +609,7 @@ def get_stats():
             "goals_scored": goals_scored,
             "goals_conceded": goals_conceded,
 
-            # rates overall (NEW but safe)
+            # rates overall
             "win_rate": win_rate,
             "draw_rate": draw_rate,
             "loss_rate": loss_rate,
@@ -559,6 +618,12 @@ def get_stats():
             "home_win_rate": home_win_rate,
             "away_win_rate": away_win_rate,
 
+            # NEW: failed to score
+            "failed_to_score": {
+                "count": fts,
+                "rate": (fts / matches_played) if matches_played else 0.0
+            },
+
             # breakdown objects
             "goals": {
                 "scored": goals_scored,
@@ -566,9 +631,14 @@ def get_stats():
                 "goal_difference": goal_difference,
                 "avg_scored": avg_scored,
                 "avg_conceded": avg_conceded,
+                "avg_total_goals": avg_total_goals,  # NEW
             },
 
-            "over_under": pack_over_under(over_25, under_25, btts, matches_played),
+            # NEW: over/under multiline + legacy 2.5
+            "over_under": pack_over_under_multiline(
+                ou_overall, matches_played, btts,
+                legacy_over25=over_25, legacy_under25=under_25
+            ),
 
             "home": {
                 "matches": home_matches,
@@ -583,9 +653,17 @@ def get_stats():
                 "goals_conceded": home_ga,
                 "avg_scored": (home_gf / home_matches) if home_matches else 0.0,
                 "avg_conceded": (home_ga / home_matches) if home_matches else 0.0,
+                "avg_total_goals": home_avg_total_goals,  # NEW
 
-                # NEW: advanced split
-                "over_under": pack_over_under(home_over_25, home_under_25, home_btts, home_matches),
+                "failed_to_score": {  # NEW
+                    "count": home_fts,
+                    "rate": (home_fts / home_matches) if home_matches else 0.0
+                },
+
+                "over_under": pack_over_under_multiline(
+                    ou_home, home_matches, home_btts,
+                    legacy_over25=home_over_25, legacy_under25=home_under_25
+                ),
                 "form": {"last_5": home_form_last_5, "last_10": home_form_last_10},
             },
 
@@ -602,9 +680,17 @@ def get_stats():
                 "goals_conceded": away_ga,
                 "avg_scored": (away_gf / away_matches) if away_matches else 0.0,
                 "avg_conceded": (away_ga / away_matches) if away_matches else 0.0,
+                "avg_total_goals": away_avg_total_goals,  # NEW
 
-                # NEW: advanced split
-                "over_under": pack_over_under(away_over_25, away_under_25, away_btts, away_matches),
+                "failed_to_score": {  # NEW
+                    "count": away_fts,
+                    "rate": (away_fts / away_matches) if away_matches else 0.0
+                },
+
+                "over_under": pack_over_under_multiline(
+                    ou_away, away_matches, away_btts,
+                    legacy_over25=away_over_25, legacy_under25=away_under_25
+                ),
                 "form": {"last_5": away_form_last_5, "last_10": away_form_last_10},
             },
 
