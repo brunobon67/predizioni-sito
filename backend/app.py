@@ -790,3 +790,8 @@ def update_matches():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+@app.get("/api/admin/ping")
+def admin_ping():
+    return jsonify({"admin_token_set": bool(os.getenv("ADMIN_TOKEN"))}), 200
