@@ -317,26 +317,9 @@
             <p class="panel-subtitle" id="standings-subtitle">—</p>
           </div>
 
-          <div class="table-wrap">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Squadra</th>
-                  <th>PT</th>
-                  <th>G</th>
-                  <th>V</th>
-                  <th>N</th>
-                  <th>P</th>
-                  <th>GF</th>
-                  <th>GA</th>
-                  <th>DR</th>
-                </tr>
-              </thead>
-              <tbody id="standings-body">
-                <tr><td colspan="10" class="muted">Nessun dato. Seleziona filtri e premi “Mostra classifica”.</td></tr>
-              </tbody>
-            </table>
+          <!-- ✅ NUOVO contenitore usato dal JS -->
+          <div id="standings-table">
+            <p class="muted">Nessun dato. Seleziona filtri e premi “Mostra classifica”.</p>
           </div>
         </div>
       </div>
@@ -418,6 +401,7 @@
     </div>
   </footer>
 
-  <script src="script.js"></script>
+  <!-- ✅ cache-bust -->
+  <script src="script.js?v=2"></script>
 </body>
 </html>
