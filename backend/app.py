@@ -758,7 +758,9 @@ def predict_match():
     finally:
         session.close()
 
-
+# -----------------------------
+# API: Admin – Update matches
+# -----------------------------
 import subprocess
 import sys
 from pathlib import Path
@@ -769,15 +771,21 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 def update_matches():
     token = request.headers.get("X-Admin-Token")
 
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "missing ADMIN_TOKEN env var"}), 500
+
+    if token != ADMIN_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
 
     try:
+        # app.py è in backend/, quindi update_leagues.py è nello stesso folder
         script_path = Path(__file__).resolve().parent / "update_leagues.py"
         subprocess.Popen([sys.executable, str(script_path)])
         return jsonify({"status": "started"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
 
 
 if __name__ == "__main__":
