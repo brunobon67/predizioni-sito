@@ -103,7 +103,7 @@ def get_teams():
 
     session = SessionLocal()
     try:
-    q = session.query(Match)
+        q = session.query(Match)
 
         if competition:
             q = q.filter(Match.competition == competition)
@@ -119,8 +119,10 @@ def get_teams():
 
         teams = sorted(list(teams_set))
         return jsonify({"teams": teams})
+
     finally:
         session.close()
+
 
 
 # -----------------------------
