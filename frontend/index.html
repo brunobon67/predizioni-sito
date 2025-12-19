@@ -197,7 +197,7 @@
 
           <!-- VS Top/Bottom: stesso blocco per tutte le viste -->
           <div class="mini-panel">
-            <h4>Vs Top / Bottom (rank al momento)</h4>
+           <h4>Vs Fasce (Top / Mid / Bottom) — rank al momento</h4>
             <p class="muted">
               Basato sulla posizione dell’avversario in classifica <b>prima</b> della partita.
             </p>
@@ -208,6 +208,13 @@
                 <div class="vs-line"><span id="vs-top-wdl">0W-0D-0L</span></div>
                 <div class="vs-sub">Win rate: <b id="vs-top-winrate">0.0%</b> — match: <b id="vs-top-matches">0</b></div>
               </div>
+
+<div class="vs-box">
+  <div class="vs-title">Vs Mid</div>
+  <div class="vs-line"><span id="vs-mid-wdl">0W-0D-0L</span></div>
+  <div class="vs-sub">Win rate: <b id="vs-mid-winrate">0.0%</b> — match: <b id="vs-mid-matches">0</b></div>
+</div>
+
 
               <div class="vs-box">
                 <div class="vs-title">Vs Bottom <span id="vs-bottom-n">5</span></div>
@@ -220,6 +227,34 @@
               Bottom = rank ≥ <b id="vs-bottom-threshold">-</b> su <b id="vs-total-teams">-</b> squadre.
             </div>
           </div>
+
+<div class="divider"></div>
+
+<h4 style="margin:0 0 8px 0;">Vs ranking (bucket)</h4>
+<p class="muted" style="margin-top:0;">
+  Prestazioni in base alla posizione dell’avversario (1–5, 6–10, …) prima della partita.
+</p>
+
+<div id="vs-bands-table" class="table-wrap">
+  <table class="table" aria-label="Vs ranking bands">
+    <thead>
+      <tr>
+        <th>Avversari</th>
+        <th>Match</th>
+        <th>W</th>
+        <th>D</th>
+        <th>L</th>
+        <th>PPG</th>
+        <th>GF</th>
+        <th>GA</th>
+      </tr>
+    </thead>
+    <tbody id="vs-bands-body">
+      <tr><td colspan="8" class="muted">—</td></tr>
+    </tbody>
+  </table>
+</div>
+
 
           <div class="divider"></div>
 

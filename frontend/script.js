@@ -139,6 +139,54 @@ function renderExtraOULines(overUnderBlock) {
 }
 
 /* =========================
+   NEW: VS ranking bands table (A+B)
+========================= */
+function renderVsBandsTable(vsg) {
+  const body = document.getElementById("vs-bands-body");
+  if (!body) return; // se non hai ancora aggiornato l'HTML, non fa nulla
+
+  if (!vsg || vsg.note || !Array.isArray(vsg.rank_bands)) {
+    body.innerHTML = `<tr><td colspan="8" class="muted">Seleziona competizione + stagione.</td></tr>`;
+    return;
+  }
+
+  const scope =
+    currentView === "home" ? vsg.bands_home :
+    currentView === "away" ? vsg.bands_away :
+    vsg.bands;
+
+  const bands = vsg.rank_bands || [];
+  if (!bands.length || !scope) {
+    body.innerHTML = `<tr><td colspan="8" class="muted">Dati non disponibili.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = bands.map((name) => {
+    const b = scope[name] || {};
+    const mp = b.matches ?? 0;
+    const w = b.wins ?? 0;
+    const d = b.draws ?? 0;
+    const l = b.losses ?? 0;
+    const ppg = (b.ppg ?? 0).toFixed(2);
+    const gf = b.goals_for ?? 0;
+    const ga = b.goals_against ?? 0;
+
+    return `
+      <tr>
+        <td><b>${name}</b></td>
+        <td>${mp}</td>
+        <td>${w}</td>
+        <td>${d}</td>
+        <td>${l}</td>
+        <td><b>${ppg}</b></td>
+        <td>${gf}</td>
+        <td>${ga}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+/* =========================
    Stats: fetch teams + fetch stats + view toggle
 ========================= */
 let lastStatsPayload = null;
@@ -195,22 +243,35 @@ function renderStats(stats) {
   setText("stats-goals-for", goalsFor);
   setText("stats-goals-against", goalsAgainst);
 
-  // VS Top/Bottom
+  // VS Top/Mid/Bottom + Bands
   const vsg = stats.vs_rank_groups || null;
   if (!vsg || vsg.note) {
     setText("vs-top-n", vsg?.top_n ?? "6");
     setText("vs-bottom-n", vsg?.bottom_n ?? "5");
+
     setText("vs-top-wdl", "0W-0D-0L");
     setText("vs-top-winrate", "0.0%");
     setText("vs-top-matches", "0");
+
+    // NEW: mid
+    setText("vs-mid-wdl", "0W-0D-0L");
+    setText("vs-mid-winrate", "0.0%");
+    setText("vs-mid-matches", "0");
+
     setText("vs-bottom-wdl", "0W-0D-0L");
     setText("vs-bottom-winrate", "0.0%");
     setText("vs-bottom-matches", "0");
+
     setText("vs-bottom-threshold", "-");
     setText("vs-total-teams", "-");
+
+    // NEW: bands table placeholder
+    renderVsBandsTable(null);
   } else {
     const scope = currentView === "home" ? vsg.home : (currentView === "away" ? vsg.away : vsg);
+
     const top = scope.vs_top || { wins: 0, draws: 0, losses: 0, win_rate: 0, matches: 0 };
+    const mid = scope.vs_mid || { wins: 0, draws: 0, losses: 0, win_rate: 0, matches: 0 };
     const bottom = scope.vs_bottom || { wins: 0, draws: 0, losses: 0, win_rate: 0, matches: 0 };
 
     setText("vs-top-n", vsg.top_n);
@@ -220,12 +281,20 @@ function renderStats(stats) {
     setText("vs-top-winrate", pct(top.win_rate));
     setText("vs-top-matches", top.matches);
 
+    // NEW: mid
+    setText("vs-mid-wdl", `${mid.wins}W-${mid.draws}D-${mid.losses}L`);
+    setText("vs-mid-winrate", pct(mid.win_rate));
+    setText("vs-mid-matches", mid.matches);
+
     setText("vs-bottom-wdl", `${bottom.wins}W-${bottom.draws}D-${bottom.losses}L`);
     setText("vs-bottom-winrate", pct(bottom.win_rate));
     setText("vs-bottom-matches", bottom.matches);
 
     setText("vs-bottom-threshold", vsg.bottom_threshold_rank);
     setText("vs-total-teams", vsg.total_teams);
+
+    // NEW: bands table (respects Totale/Casa/Trasferta)
+    renderVsBandsTable(vsg);
   }
 
   // Advanced: Goal & medie
