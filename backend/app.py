@@ -103,7 +103,7 @@ def get_teams():
 
     session = SessionLocal()
     try:
-        q = session.query(Match).filter(Match.status == "FINISHED")
+      q = session.query(Match)
 
         if competition:
             q = q.filter(Match.competition == competition)
