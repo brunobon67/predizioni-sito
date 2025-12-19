@@ -196,137 +196,171 @@ def get_stats():
         # =========================
         # VS TOP/BOTTOM (rank al momento)
         # =========================
-        top_n = request.args.get("top_n", default=6, type=int)
-        bottom_n = request.args.get("bottom_n", default=5, type=int)
+       # =========================
+# VS TOP/MID/BOTTOM + BUCKETS (rank al momento)
+# =========================
+top_n = request.args.get("top_n", default=6, type=int)
+bottom_n = request.args.get("bottom_n", default=5, type=int)
 
-        vs_rank_groups = {
-            "note": "Per calcolare vs_top/vs_bottom serve selezionare competition e season."
+vs_rank_groups = {
+    "note": "Per calcolare vs_top/vs_mid/vs_bottom e buckets serve selezionare competition e season."
+}
+
+if competition and (season_param is not None):
+    # numero squadre della lega+stagione (dalle partite finite)
+    season_all = (
+        session.query(Match)
+        .filter(Match.status == "FINISHED")
+        .filter(Match.competition == competition)
+        .filter(Match.season == season_param)
+        .all()
+    )
+
+    teams_set = set()
+    for mm in season_all:
+        teams_set.add(mm.home_team)
+        teams_set.add(mm.away_team)
+    total_teams = len(teams_set)
+
+    bottom_threshold = max(1, total_teams - bottom_n + 1)
+
+    match_ids = [m.id for m in matches]
+    ctx_rows = (
+        session.query(MatchContext)
+        .filter(MatchContext.match_id.in_(match_ids))
+        .all()
+    )
+    ctx_by_id = {c.match_id: c for c in ctx_rows}
+
+    # ---- helper per accumulare stats ----
+    def init_bucket():
+        return {"w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0}
+
+    def add_result(bucket, gf, ga):
+        bucket["gf"] += gf
+        bucket["ga"] += ga
+        if gf > ga:
+            bucket["w"] += 1
+        elif gf == ga:
+            bucket["d"] += 1
+        else:
+            bucket["l"] += 1
+
+    def pack_bucket(b):
+        mp = b["w"] + b["d"] + b["l"]
+        points = b["w"] * 3 + b["d"]
+        return {
+            "matches": mp,
+            "wins": b["w"],
+            "draws": b["d"],
+            "losses": b["l"],
+            "points": points,
+            "ppg": (points / mp) if mp else 0.0,
+            "goals_for": b["gf"],
+            "goals_against": b["ga"],
+            "avg_goals_for": (b["gf"] / mp) if mp else 0.0,
+            "avg_goals_against": (b["ga"] / mp) if mp else 0.0,
+            "win_rate": (b["w"] / mp) if mp else 0.0,
+            "draw_rate": (b["d"] / mp) if mp else 0.0,
+            "loss_rate": (b["l"] / mp) if mp else 0.0,
         }
 
-        if competition and (season_param is not None):
-            # numero squadre della lega+stagione (dalle partite finite)
-            season_all = (
-                session.query(Match)
-                .filter(Match.status == "FINISHED")
-                .filter(Match.competition == competition)
-                .filter(Match.season == season_param)
-                .all()
-            )
-            teams_set = set()
-            for mm in season_all:
-                teams_set.add(mm.home_team)
-                teams_set.add(mm.away_team)
-            total_teams = len(teams_set)
+    # ---- TOP/MID/BOTTOM buckets overall + split ----
+    top_all = init_bucket()
+    mid_all = init_bucket()
+    bot_all = init_bucket()
 
-            bottom_threshold = max(1, total_teams - bottom_n + 1)
+    top_home = init_bucket()
+    mid_home = init_bucket()
+    bot_home = init_bucket()
 
-            match_ids = [m.id for m in matches]
-            ctx_rows = (
-                session.query(MatchContext)
-                .filter(MatchContext.match_id.in_(match_ids))
-                .all()
-            )
-            ctx_by_id = {c.match_id: c for c in ctx_rows}
+    top_away = init_bucket()
+    mid_away = init_bucket()
+    bot_away = init_bucket()
 
-            top_w = top_d = top_l = 0
-            bottom_w = bottom_d = bottom_l = 0
+    # ---- RANK BUCKETS (dinamici) ----
+    # Esempio con step 5 (1-5, 6-10, 11-15, 16-20) ma adattato al numero squadre reale
+    bucket_size = 5
+    rank_bands = []
+    start = 1
+    while start <= total_teams:
+        end = min(total_teams, start + bucket_size - 1)
+        rank_bands.append((f"{start}-{end}", start, end))
+        start = end + 1
 
-            home_top_w = home_top_d = home_top_l = 0
-            home_bottom_w = home_bottom_d = home_bottom_l = 0
-            away_top_w = away_top_d = away_top_l = 0
-            away_bottom_w = away_bottom_d = away_bottom_l = 0
+    bands_all = {name: init_bucket() for (name, _, _) in rank_bands}
+    bands_home = {name: init_bucket() for (name, _, _) in rank_bands}
+    bands_away = {name: init_bucket() for (name, _, _) in rank_bands}
 
-            for m in matches:
-                ctx = ctx_by_id.get(m.id)
-                if not ctx:
-                    continue
+    def band_name_for_rank(rank):
+        for (name, a, b) in rank_bands:
+            if a <= rank <= b:
+                return name
+        return None
 
-                # True se la squadra richiesta gioca in casa in questa partita
-                is_home = (m.home_team == team)
+    # ---- loop match squadra ----
+    for m in matches:
+        ctx = ctx_by_id.get(m.id)
+        if not ctx:
+            continue
 
-                hg = m.home_goals or 0
-                ag = m.away_goals or 0
+        is_home = (m.home_team == team)
 
-                # team goals & opponent goals
-                if m.home_team == team:
-                    team_goals, opp_goals = hg, ag
-                    opp_rank_before = ctx.away_rank_before
-                else:
-                    team_goals, opp_goals = ag, hg
-                    opp_rank_before = ctx.home_rank_before
+        hg = m.home_goals or 0
+        ag = m.away_goals or 0
 
-                # vs TOP
-                if opp_rank_before <= top_n:
-                    if team_goals > opp_goals:
-                        top_w += 1
-                        if is_home:
-                            home_top_w += 1
-                        else:
-                            away_top_w += 1
-                    elif team_goals == opp_goals:
-                        top_d += 1
-                        if is_home:
-                            home_top_d += 1
-                        else:
-                            away_top_d += 1
-                    else:
-                        top_l += 1
-                        if is_home:
-                            home_top_l += 1
-                        else:
-                            away_top_l += 1
+        # team goals & opponent goals + rank avversario prima del match
+        if is_home:
+            gf, ga = hg, ag
+            opp_rank_before = ctx.away_rank_before
+        else:
+            gf, ga = ag, hg
+            opp_rank_before = ctx.home_rank_before
 
-                # vs BOTTOM
-                if opp_rank_before >= bottom_threshold:
-                    if team_goals > opp_goals:
-                        bottom_w += 1
-                        if is_home:
-                            home_bottom_w += 1
-                        else:
-                            away_bottom_w += 1
-                    elif team_goals == opp_goals:
-                        bottom_d += 1
-                        if is_home:
-                            home_bottom_d += 1
-                        else:
-                            away_bottom_d += 1
-                    else:
-                        bottom_l += 1
-                        if is_home:
-                            home_bottom_l += 1
-                        else:
-                            away_bottom_l += 1
+        # decide fascia
+        if opp_rank_before <= top_n:
+            add_result(top_all, gf, ga)
+            add_result(top_home if is_home else top_away, gf, ga)
+        elif opp_rank_before >= bottom_threshold:
+            add_result(bot_all, gf, ga)
+            add_result(bot_home if is_home else bot_away, gf, ga)
+        else:
+            add_result(mid_all, gf, ga)
+            add_result(mid_home if is_home else mid_away, gf, ga)
 
-            def pack(w, d, l):
-                m_cnt = w + d + l
-                return {
-                    "matches": m_cnt,
-                    "wins": w,
-                    "draws": d,
-                    "losses": l,
-                    "win_rate": (w / m_cnt) if m_cnt else 0.0,
-                    "draw_rate": (d / m_cnt) if m_cnt else 0.0,
-                    "loss_rate": (l / m_cnt) if m_cnt else 0.0,
-                }
+        # rank bucket (1-5,6-10,...)
+        bn = band_name_for_rank(opp_rank_before)
+        if bn:
+            add_result(bands_all[bn], gf, ga)
+            add_result(bands_home[bn] if is_home else bands_away[bn], gf, ga)
 
-            vs_rank_groups = {
-                "top_n": top_n,
-                "bottom_n": bottom_n,
-                "total_teams": total_teams,
-                "bottom_threshold_rank": bottom_threshold,
+    vs_rank_groups = {
+        "top_n": top_n,
+        "bottom_n": bottom_n,
+        "total_teams": total_teams,
+        "bottom_threshold_rank": bottom_threshold,
 
-                "vs_top": pack(top_w, top_d, top_l),
-                "vs_bottom": pack(bottom_w, bottom_d, bottom_l),
+        "vs_top": pack_bucket(top_all),
+        "vs_mid": pack_bucket(mid_all),
+        "vs_bottom": pack_bucket(bot_all),
 
-                "home": {
-                    "vs_top": pack(home_top_w, home_top_d, home_top_l),
-                    "vs_bottom": pack(home_bottom_w, home_bottom_d, home_bottom_l),
-                },
-                "away": {
-                    "vs_top": pack(away_top_w, away_top_d, away_top_l),
-                    "vs_bottom": pack(away_bottom_w, away_bottom_d, away_bottom_l),
-                },
-            }
+        "home": {
+            "vs_top": pack_bucket(top_home),
+            "vs_mid": pack_bucket(mid_home),
+            "vs_bottom": pack_bucket(bot_home),
+        },
+        "away": {
+            "vs_top": pack_bucket(top_away),
+            "vs_mid": pack_bucket(mid_away),
+            "vs_bottom": pack_bucket(bot_away),
+        },
+
+        # Buckets per ranking avversario (super utili per previsioni)
+        "rank_bands": [name for (name, _, _) in rank_bands],
+        "bands": {name: pack_bucket(bands_all[name]) for (name, _, _) in rank_bands},
+        "bands_home": {name: pack_bucket(bands_home[name]) for (name, _, _) in rank_bands},
+        "bands_away": {name: pack_bucket(bands_away[name]) for (name, _, _) in rank_bands},
+    }
 
         # ===== CALCOLI BASE =====
         matches_played = len(matches)
