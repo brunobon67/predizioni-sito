@@ -914,3 +914,37 @@ if __name__ == "__main__":
 @app.get("/api/admin/ping")
 def admin_ping():
     return jsonify({"admin_token_set": bool(os.getenv("ADMIN_TOKEN"))}), 200
+
+
+import os
+import subprocess
+from flask import request, jsonify
+
+@app.route("/api/admin/import", methods=["POST"])
+def admin_import():
+    token = os.getenv("ADMIN_TOKEN", "")
+    req_token = request.headers.get("X-Admin-Token", "")
+
+    if not token or req_token != token:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # esegue lo script di import dentro Render (DB interno accessibile)
+    try:
+        result = subprocess.run(
+            ["python", "backend/update_leagues.py"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return jsonify({
+            "ok": True,
+            "stdout": result.stdout[-4000:],  # limita output
+            "stderr": result.stderr[-4000:]
+        })
+    except subprocess.CalledProcessError as e:
+        return jsonify({
+            "ok": False,
+            "stdout": (e.stdout or "")[-4000:],
+            "stderr": (e.stderr or "")[-4000:],
+        }), 500
+
