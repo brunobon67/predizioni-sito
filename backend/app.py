@@ -207,6 +207,117 @@ def admin_db_check():
     finally:
         session.close()
 
+from sqlalchemy import text
+
+@app.route("/api/admin/context/rebuild", methods=["POST"])
+def admin_rebuild_context():
+    ok, resp = require_admin()
+    if not ok:
+        return resp
+
+    payload = request.get_json(force=True) or {}
+    competition = payload.get("competition")
+    season = payload.get("season")
+
+    if not competition or season is None:
+        return jsonify({"error": "competition and season are required"}), 400
+
+    session = SessionLocal()
+    try:
+        # 1) carica tutte le partite FINISHED in ordine cronologico
+        matches = (
+            session.query(Match)
+            .filter(Match.status == "FINISHED")
+            .filter(Match.competition == competition)
+            .filter(Match.season == int(season))
+            .order_by(Match.date.asc(), Match.id.asc())
+            .all()
+        )
+
+        if not matches:
+            return jsonify({"ok": True, "message": "No FINISHED matches found", "inserted": 0, "total_teams": 0}), 200
+
+        # 2) calcola set squadre
+        teams = set()
+        for m in matches:
+            teams.add(m.home_team)
+            teams.add(m.away_team)
+        teams = sorted(list(teams))
+        total_teams = len(teams)
+
+        # 3) wipe contesto esistente per quella stagione/competizione
+        session.execute(text("""
+            DELETE FROM match_context
+            WHERE competition = :competition AND season = :season
+        """), {"competition": competition, "season": int(season)})
+
+        # 4) classifica live
+        table = {t: {"points": 0, "gf": 0, "ga": 0, "played": 0} for t in teams}
+
+        def rank_map():
+            rows = []
+            for t, v in table.items():
+                gd = v["gf"] - v["ga"]
+                rows.append((t, v["points"], gd, v["gf"], v["played"]))
+            # ordina come standings: points, gd, gf, played, name
+            rows.sort(key=lambda r: (r[1], r[2], r[3], r[4], r[0]), reverse=True)
+            return {team: idx + 1 for idx, (team, *_rest) in enumerate(rows)}
+
+        inserted = 0
+
+        for m in matches:
+            ranks_before = rank_map()
+            home_rank_before = ranks_before.get(m.home_team, total_teams)
+            away_rank_before = ranks_before.get(m.away_team, total_teams)
+
+            # salva contesto "prima" della partita
+            ctx = MatchContext(
+                match_id=m.id,
+                competition=competition,
+                season=int(season),
+                date=m.date,
+                home_team=m.home_team,
+                away_team=m.away_team,
+                home_rank_before=home_rank_before,
+                away_rank_before=away_rank_before,
+                total_teams=total_teams
+            )
+            session.add(ctx)
+            inserted += 1
+
+            # aggiorna classifica con risultato
+            hg = m.home_goals or 0
+            ag = m.away_goals or 0
+
+            table[m.home_team]["played"] += 1
+            table[m.away_team]["played"] += 1
+
+            table[m.home_team]["gf"] += hg
+            table[m.home_team]["ga"] += ag
+            table[m.away_team]["gf"] += ag
+            table[m.away_team]["ga"] += hg
+
+            if hg > ag:
+                table[m.home_team]["points"] += 3
+            elif hg < ag:
+                table[m.away_team]["points"] += 3
+            else:
+                table[m.home_team]["points"] += 1
+                table[m.away_team]["points"] += 1
+
+        session.commit()
+
+        return jsonify({
+            "ok": True,
+            "competition": competition,
+            "season": int(season),
+            "total_teams": total_teams,
+            "inserted": inserted
+        }), 200
+
+    finally:
+        session.close()
+
 
 # =============================
 # API: Teams
