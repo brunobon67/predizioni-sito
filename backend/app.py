@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-from sqlalchemy import create_engine, Column, Integer, String, or_
+from sqlalchemy import create_engine, Column, Integer, String, or_, text
 from sqlalchemy import BigInteger
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -149,8 +149,9 @@ def admin_update_matches():
     return admin_import()
 
 
-from sqlalchemy import text
-
+# -----------------------------
+# Admin: DB check
+# -----------------------------
 @app.route("/api/admin/db/check", methods=["GET"])
 def admin_db_check():
     ok, resp = require_admin()
@@ -178,7 +179,6 @@ def admin_db_check():
             LIMIT 10
         """)).fetchall()
 
-        # E soprattutto: capire se id interno è diverso da external_id
         sample = session.execute(text("""
             SELECT id, external_id, external_source, competition, date, status
             FROM matches
@@ -207,8 +207,10 @@ def admin_db_check():
     finally:
         session.close()
 
-from sqlalchemy import text
 
+# -----------------------------
+# Admin: Context rebuild (single)
+# -----------------------------
 @app.route("/api/admin/context/rebuild", methods=["POST"])
 def admin_rebuild_context():
     ok, resp = require_admin()
@@ -222,14 +224,15 @@ def admin_rebuild_context():
     if not competition or season is None:
         return jsonify({"error": "competition and season are required"}), 400
 
+    season = int(season)
+
     session = SessionLocal()
     try:
-        # 1) carica tutte le partite FINISHED in ordine cronologico
         matches = (
             session.query(Match)
             .filter(Match.status == "FINISHED")
             .filter(Match.competition == competition)
-            .filter(Match.season == int(season))
+            .filter(Match.season == season)
             .order_by(Match.date.asc(), Match.id.asc())
             .all()
         )
@@ -237,7 +240,6 @@ def admin_rebuild_context():
         if not matches:
             return jsonify({"ok": True, "message": "No FINISHED matches found", "inserted": 0, "total_teams": 0}), 200
 
-        # 2) calcola set squadre
         teams = set()
         for m in matches:
             teams.add(m.home_team)
@@ -245,13 +247,11 @@ def admin_rebuild_context():
         teams = sorted(list(teams))
         total_teams = len(teams)
 
-        # 3) wipe contesto esistente per quella stagione/competizione
         session.execute(text("""
             DELETE FROM match_context
             WHERE competition = :competition AND season = :season
-        """), {"competition": competition, "season": int(season)})
+        """), {"competition": competition, "season": season})
 
-        # 4) classifica live
         table = {t: {"points": 0, "gf": 0, "ga": 0, "played": 0} for t in teams}
 
         def rank_map():
@@ -259,7 +259,6 @@ def admin_rebuild_context():
             for t, v in table.items():
                 gd = v["gf"] - v["ga"]
                 rows.append((t, v["points"], gd, v["gf"], v["played"]))
-            # ordina come standings: points, gd, gf, played, name
             rows.sort(key=lambda r: (r[1], r[2], r[3], r[4], r[0]), reverse=True)
             return {team: idx + 1 for idx, (team, *_rest) in enumerate(rows)}
 
@@ -270,22 +269,19 @@ def admin_rebuild_context():
             home_rank_before = ranks_before.get(m.home_team, total_teams)
             away_rank_before = ranks_before.get(m.away_team, total_teams)
 
-            # salva contesto "prima" della partita
-            ctx = MatchContext(
+            session.add(MatchContext(
                 match_id=m.id,
                 competition=competition,
-                season=int(season),
+                season=season,
                 date=m.date,
                 home_team=m.home_team,
                 away_team=m.away_team,
                 home_rank_before=home_rank_before,
                 away_rank_before=away_rank_before,
                 total_teams=total_teams
-            )
-            session.add(ctx)
+            ))
             inserted += 1
 
-            # aggiorna classifica con risultato
             hg = m.home_goals or 0
             ag = m.away_goals or 0
 
@@ -310,11 +306,127 @@ def admin_rebuild_context():
         return jsonify({
             "ok": True,
             "competition": competition,
-            "season": int(season),
+            "season": season,
             "total_teams": total_teams,
             "inserted": inserted
         }), 200
+    finally:
+        session.close()
 
+
+# -----------------------------
+# Admin: Context rebuild (ALL competitions/seasons)
+# -----------------------------
+@app.route("/api/admin/context/rebuild-all", methods=["POST"])
+def admin_rebuild_context_all():
+    ok, resp = require_admin()
+    if not ok:
+        return resp
+
+    payload = request.get_json(force=True) or {}
+    only_finished = payload.get("only_finished", True)
+    limit = payload.get("limit")  # opzionale per test
+
+    session = SessionLocal()
+    try:
+        where = "WHERE status='FINISHED'" if only_finished else ""
+        lim_sql = "LIMIT :lim" if limit else ""
+        params = {"lim": int(limit)} if limit else {}
+
+        pairs = session.execute(text(f"""
+            SELECT competition, season
+            FROM matches
+            {where}
+            GROUP BY competition, season
+            ORDER BY competition, season
+            {lim_sql}
+        """), params).fetchall()
+
+        pairs = [(p[0], int(p[1])) for p in pairs if p[0] is not None and p[1] is not None]
+
+        results = []
+
+        for comp, seas in pairs:
+            matches = (
+                session.query(Match)
+                .filter(Match.status == "FINISHED")
+                .filter(Match.competition == comp)
+                .filter(Match.season == seas)
+                .order_by(Match.date.asc(), Match.id.asc())
+                .all()
+            )
+
+            if not matches:
+                results.append({"competition": comp, "season": seas, "inserted": 0, "total_teams": 0})
+                continue
+
+            teams = set()
+            for m in matches:
+                teams.add(m.home_team)
+                teams.add(m.away_team)
+            teams = sorted(list(teams))
+            total_teams = len(teams)
+
+            session.execute(text("""
+                DELETE FROM match_context
+                WHERE competition = :c AND season = :s
+            """), {"c": comp, "s": seas})
+
+            table = {t: {"points": 0, "gf": 0, "ga": 0, "played": 0} for t in teams}
+
+            def rank_map():
+                rows = []
+                for t, v in table.items():
+                    gd = v["gf"] - v["ga"]
+                    rows.append((t, v["points"], gd, v["gf"], v["played"]))
+                rows.sort(key=lambda r: (r[1], r[2], r[3], r[4], r[0]), reverse=True)
+                return {team: idx + 1 for idx, (team, *_rest) in enumerate(rows)}
+
+            inserted = 0
+
+            for m in matches:
+                ranks_before = rank_map()
+                session.add(MatchContext(
+                    match_id=m.id,
+                    competition=comp,
+                    season=seas,
+                    date=m.date,
+                    home_team=m.home_team,
+                    away_team=m.away_team,
+                    home_rank_before=ranks_before.get(m.home_team, total_teams),
+                    away_rank_before=ranks_before.get(m.away_team, total_teams),
+                    total_teams=total_teams
+                ))
+                inserted += 1
+
+                hg = m.home_goals or 0
+                ag = m.away_goals or 0
+
+                table[m.home_team]["played"] += 1
+                table[m.away_team]["played"] += 1
+
+                table[m.home_team]["gf"] += hg
+                table[m.home_team]["ga"] += ag
+                table[m.away_team]["gf"] += ag
+                table[m.away_team]["ga"] += hg
+
+                if hg > ag:
+                    table[m.home_team]["points"] += 3
+                elif hg < ag:
+                    table[m.away_team]["points"] += 3
+                else:
+                    table[m.home_team]["points"] += 1
+                    table[m.away_team]["points"] += 1
+
+            session.commit()
+            results.append({"competition": comp, "season": seas, "inserted": inserted, "total_teams": total_teams})
+
+        return jsonify({
+            "ok": True,
+            "only_finished": only_finished,
+            "pairs": len(pairs),
+            "results": results
+        }), 200
     finally:
         session.close()
 
@@ -384,7 +496,7 @@ def get_matches():
 
 
 # =============================
-# API: Stats  (qui lascio la tua versione estesa: l'hai già nel tuo file)
+# API: Stats (complete, includes top/mid/bottom + rank bands via MatchContext)
 # =============================
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
@@ -409,7 +521,6 @@ def get_stats():
     try:
         q = session.query(Match).filter(Match.status == "FINISHED")
 
-        # filtri
         if competition:
             q = q.filter(Match.competition == competition)
         if season_param is not None:
@@ -419,7 +530,7 @@ def get_stats():
         matches = q.order_by(Match.date.asc()).all()
 
         # =========================
-        # VS TOP / MID / BOTTOM + RANK BUCKETS (rank al momento)
+        # VS TOP / MID / BOTTOM + RANK BUCKETS
         # =========================
         top_n = request.args.get("top_n", default=6, type=int)
         bottom_n = request.args.get("bottom_n", default=5, type=int)
@@ -429,7 +540,6 @@ def get_stats():
         }
 
         if competition and (season_param is not None):
-            # calcolo numero squadre in stagione (da match finiti)
             season_all = (
                 session.query(Match)
                 .filter(Match.status == "FINISHED")
@@ -486,7 +596,6 @@ def get_stats():
                     "loss_rate": (b["l"] / mp) if mp else 0.0,
                 }
 
-            # TOP / MID / BOTTOM buckets
             top_all = init_bucket()
             mid_all = init_bucket()
             bot_all = init_bucket()
@@ -499,7 +608,6 @@ def get_stats():
             mid_away = init_bucket()
             bot_away = init_bucket()
 
-            # RANK BANDS (1-5 / 6-10 / ...)
             bucket_size = 5
             rank_bands = []
             start = 1
@@ -518,7 +626,6 @@ def get_stats():
                         return name
                 return None
 
-            # loop match
             missing_ctx = 0
             for m in matches:
                 ctx = ctx_by_id.get(m.id)
@@ -538,7 +645,6 @@ def get_stats():
                     gf, ga = ag, hg
                     opp_rank_before = ctx.home_rank_before
 
-                # fascia
                 if opp_rank_before <= top_n:
                     add_result(top_all, gf, ga)
                     add_result(top_home if is_home else top_away, gf, ga)
@@ -549,7 +655,6 @@ def get_stats():
                     add_result(mid_all, gf, ga)
                     add_result(mid_home if is_home else mid_away, gf, ga)
 
-                # bucket ranking
                 bn = band_name_for_rank(opp_rank_before)
                 if bn:
                     add_result(bands_all[bn], gf, ga)
@@ -584,19 +689,17 @@ def get_stats():
             }
 
         # =========================
-        # CALCOLI BASE + HOME/AWAY + FORMA + O/U MULTI-LINE + BTTS
+        # BASE + HOME/AWAY + FORM + O/U + BTTS
         # =========================
         matches_played = len(matches)
         wins = draws = losses = 0
         goals_scored = goals_conceded = 0
 
-        # HOME/AWAY breakdown
         home_matches = home_wins = home_draws = home_losses = 0
         away_matches = away_wins = away_draws = away_losses = 0
         home_gf = home_ga = 0
         away_gf = away_ga = 0
 
-        # Over/Under multi-line
         OU_LINES = [0.5, 1.5, 2.5, 3.5, 4.5]
 
         def init_ou_dict():
@@ -606,19 +709,15 @@ def get_stats():
         ou_home = init_ou_dict()
         ou_away = init_ou_dict()
 
-        # Failed to score
         fts = 0
         home_fts = 0
         away_fts = 0
 
-        # legacy overall 2.5
         over_25 = under_25 = btts = 0
-        # legacy split 2.5
         home_over_25 = home_under_25 = home_btts = 0
         away_over_25 = away_under_25 = away_btts = 0
 
-        # form sequences
-        results_sequence = []  # overall W/D/L
+        results_sequence = []
         home_results_sequence = []
         away_results_sequence = []
         home_matches_list = []
@@ -639,7 +738,6 @@ def get_stats():
             goals_scored += gf
             goals_conceded += ga
 
-            # Failed to score
             if gf == 0:
                 fts += 1
                 if is_home_game:
@@ -647,7 +745,6 @@ def get_stats():
                 else:
                     away_fts += 1
 
-            # W/D/L
             if gf > ga:
                 wins += 1
                 results_sequence.append("W")
@@ -676,7 +773,6 @@ def get_stats():
                     away_losses += 1
                     away_results_sequence.append("L")
 
-            # home/away counts & goals
             if is_home_game:
                 home_matches += 1
                 home_gf += gf
@@ -688,7 +784,6 @@ def get_stats():
                 away_ga += ga
                 away_matches_list.append(m)
 
-            # Over/Under multiline overall + split
             for line in OU_LINES:
                 if total_goals > line:
                     ou_overall[line]["over"] += 1
@@ -702,13 +797,11 @@ def get_stats():
                 else:
                     target[line]["under"] += 1
 
-            # legacy over/under 2.5
             if total_goals > 2.5:
                 over_25 += 1
             else:
                 under_25 += 1
 
-            # BTTS
             if hg > 0 and ag > 0:
                 btts += 1
 
@@ -727,7 +820,6 @@ def get_stats():
                 if hg > 0 and ag > 0:
                     away_btts += 1
 
-        # derived overall
         goal_difference = goals_scored - goals_conceded
         avg_scored = goals_scored / matches_played if matches_played else 0.0
         avg_conceded = goals_conceded / matches_played if matches_played else 0.0
@@ -737,7 +829,6 @@ def get_stats():
         draw_rate = draws / matches_played if matches_played else 0.0
         loss_rate = losses / matches_played if matches_played else 0.0
 
-        # rates home/away
         home_win_rate = home_wins / home_matches if home_matches else 0.0
         home_draw_rate = home_draws / home_matches if home_matches else 0.0
         home_loss_rate = home_losses / home_matches if home_matches else 0.0
@@ -749,37 +840,7 @@ def get_stats():
         home_avg_total_goals = (home_gf + home_ga) / home_matches if home_matches else 0.0
         away_avg_total_goals = (away_gf + away_ga) / away_matches if away_matches else 0.0
 
-        # form helpers
-        def form_block(last_n: int):
-            seq = results_sequence[-last_n:] if last_n else []
-            w = seq.count("W")
-            d = seq.count("D")
-            l = seq.count("L")
-            points = w * 3 + d
-
-            gf_sum = ga_sum = 0
-            last_matches = matches[-last_n:] if last_n else []
-            for mm in last_matches:
-                hg = mm.home_goals or 0
-                ag = mm.away_goals or 0
-                if mm.home_team == team:
-                    gf_sum += hg
-                    ga_sum += ag
-                else:
-                    gf_sum += ag
-                    ga_sum += hg
-
-            return {
-                "record": f"{w}W-{d}D-{l}L",
-                "wins": w,
-                "draws": d,
-                "losses": l,
-                "points": points,
-                "goals_scored": gf_sum,
-                "goals_conceded": ga_sum,
-            }
-
-        def form_block_from(seq_source, match_list, last_n: int):
+        def form_block(seq_source, match_list, last_n: int):
             seq = seq_source[-last_n:] if last_n else []
             w = seq.count("W")
             d = seq.count("D")
@@ -808,14 +869,14 @@ def get_stats():
                 "goals_conceded": ga_sum,
             }
 
-        form_last_5 = form_block(5)
-        form_last_10 = form_block(10)
+        form_last_5 = form_block(results_sequence, matches, 5)
+        form_last_10 = form_block(results_sequence, matches, 10)
 
-        home_form_last_5 = form_block_from(home_results_sequence, home_matches_list, 5)
-        home_form_last_10 = form_block_from(home_results_sequence, home_matches_list, 10)
+        home_form_last_5 = form_block(home_results_sequence, home_matches_list, 5)
+        home_form_last_10 = form_block(home_results_sequence, home_matches_list, 10)
 
-        away_form_last_5 = form_block_from(away_results_sequence, away_matches_list, 5)
-        away_form_last_10 = form_block_from(away_results_sequence, away_matches_list, 10)
+        away_form_last_5 = form_block(away_results_sequence, away_matches_list, 5)
+        away_form_last_10 = form_block(away_results_sequence, away_matches_list, 10)
 
         def pack_over_under_multiline(ou_dict, mp, btts_count, legacy_over25=None, legacy_under25=None):
             out = {
@@ -823,11 +884,10 @@ def get_stats():
                 "btts_rate": (btts_count / mp) if mp else 0.0,
                 "lines": {}
             }
-
             for line, v in ou_dict.items():
                 over_cnt = v["over"]
                 under_cnt = v["under"]
-                key = str(line).replace(".", "_")  # 2.5 -> "2_5"
+                key = str(line).replace(".", "_")
                 out["lines"][key] = {
                     "line": line,
                     "over": over_cnt,
@@ -835,14 +895,11 @@ def get_stats():
                     "over_rate": (over_cnt / mp) if mp else 0.0,
                     "under_rate": (under_cnt / mp) if mp else 0.0,
                 }
-
-            # retrocompat: over_25 / under_25
             if legacy_over25 is not None and legacy_under25 is not None:
                 out["over_25"] = legacy_over25
                 out["under_25"] = legacy_under25
                 out["over_25_rate"] = (legacy_over25 / mp) if mp else 0.0
                 out["under_25_rate"] = (legacy_under25 / mp) if mp else 0.0
-
             return out
 
         stats = {
@@ -949,7 +1006,6 @@ def get_stats():
         return jsonify(stats)
     finally:
         session.close()
-
 
 
 @app.route("/api/standings", methods=["GET"])
