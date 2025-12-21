@@ -107,6 +107,111 @@ def require_admin():
         return False, (jsonify({"error": "unauthorized"}), 401)
     return True, None
 
+def _rebuild_context_all_internal(only_finished: bool = True, limit=None):
+    """
+    Ricostruisce match_context per tutte le coppie (competition, season).
+    Usata internamente dopo /api/admin/import per automatizzare top/mid/bottom + ranking.
+    """
+    session = SessionLocal()
+    try:
+        where = "WHERE status='FINISHED'" if only_finished else ""
+        lim_sql = "LIMIT :lim" if limit else ""
+        params = {"lim": int(limit)} if limit else {}
+
+        pairs = session.execute(text(f"""
+            SELECT competition, season
+            FROM matches
+            {where}
+            GROUP BY competition, season
+            ORDER BY competition, season
+            {lim_sql}
+        """), params).fetchall()
+
+        pairs = [(p[0], int(p[1])) for p in pairs if p[0] is not None and p[1] is not None]
+
+        results = []
+
+        for comp, seas in pairs:
+            matches = (
+                session.query(Match)
+                .filter(Match.status == "FINISHED")
+                .filter(Match.competition == comp)
+                .filter(Match.season == seas)
+                .order_by(Match.date.asc(), Match.id.asc())
+                .all()
+            )
+
+            if not matches:
+                results.append({"competition": comp, "season": seas, "inserted": 0, "total_teams": 0})
+                continue
+
+            teams = set()
+            for m in matches:
+                teams.add(m.home_team)
+                teams.add(m.away_team)
+            teams = sorted(list(teams))
+            total_teams = len(teams)
+
+            session.execute(text("""
+                DELETE FROM match_context
+                WHERE competition = :c AND season = :s
+            """), {"c": comp, "s": seas})
+
+            table = {t: {"points": 0, "gf": 0, "ga": 0, "played": 0} for t in teams}
+
+            def rank_map():
+                rows = []
+                for t, v in table.items():
+                    gd = v["gf"] - v["ga"]
+                    rows.append((t, v["points"], gd, v["gf"], v["played"]))
+                rows.sort(key=lambda r: (r[1], r[2], r[3], r[4], r[0]), reverse=True)
+                return {team: idx + 1 for idx, (team, *_rest) in enumerate(rows)}
+
+            inserted = 0
+
+            for m in matches:
+                ranks_before = rank_map()
+                session.add(MatchContext(
+                    match_id=m.id,
+                    competition=comp,
+                    season=seas,
+                    date=m.date,
+                    home_team=m.home_team,
+                    away_team=m.away_team,
+                    home_rank_before=ranks_before.get(m.home_team, total_teams),
+                    away_rank_before=ranks_before.get(m.away_team, total_teams),
+                    total_teams=total_teams
+                ))
+                inserted += 1
+
+                hg = m.home_goals or 0
+                ag = m.away_goals or 0
+
+                table[m.home_team]["played"] += 1
+                table[m.away_team]["played"] += 1
+
+                table[m.home_team]["gf"] += hg
+                table[m.home_team]["ga"] += ag
+                table[m.away_team]["gf"] += ag
+                table[m.away_team]["ga"] += hg
+
+                if hg > ag:
+                    table[m.home_team]["points"] += 3
+                elif hg < ag:
+                    table[m.away_team]["points"] += 3
+                else:
+                    table[m.home_team]["points"] += 1
+                    table[m.away_team]["points"] += 1
+
+            session.commit()
+            results.append({"competition": comp, "season": seas, "inserted": inserted, "total_teams": total_teams})
+
+        return {"ok": True, "only_finished": only_finished, "pairs": len(pairs), "results": results}
+
+    finally:
+        session.close()
+
+
 
 @app.route("/api/admin/ping", methods=["GET"])
 def admin_ping():
@@ -117,7 +222,16 @@ def admin_ping():
 def admin_import():
     ok, resp = require_admin()
     if not ok:
-        return resp
+            # AUTO: rebuild context dopo import (così top/mid/bottom + ranking funzionano sempre)
+        rebuild_summary = _rebuild_context_all_internal(only_finished=True)
+
+        return jsonify({
+            "ok": True,
+            "stdout": (result.stdout or "")[-4000:],
+            "stderr": (result.stderr or "")[-4000:],
+            "context_rebuild": rebuild_summary
+        }), 200
+
 
     try:
         script_path = Path(__file__).resolve().parent / "update_leagues.py"
