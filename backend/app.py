@@ -149,6 +149,65 @@ def admin_update_matches():
     return admin_import()
 
 
+from sqlalchemy import text
+
+@app.route("/api/admin/db/check", methods=["GET"])
+def admin_db_check():
+    ok, resp = require_admin()
+    if not ok:
+        return resp
+
+    session = SessionLocal()
+    try:
+        total = session.query(Match).count()
+        with_external = session.query(Match).filter(Match.external_id.isnot(None)).count()
+        finished_with_score = (
+            session.query(Match)
+            .filter(Match.status == "FINISHED")
+            .filter(Match.home_goals.isnot(None))
+            .filter(Match.away_goals.isnot(None))
+            .count()
+        )
+
+        dup_rows = session.execute(text("""
+            SELECT external_source, external_id, COUNT(*) AS c
+            FROM matches
+            GROUP BY external_source, external_id
+            HAVING COUNT(*) > 1
+            ORDER BY c DESC
+            LIMIT 10
+        """)).fetchall()
+
+        # E soprattutto: capire se id interno è diverso da external_id
+        sample = session.execute(text("""
+            SELECT id, external_id, external_source, competition, date, status
+            FROM matches
+            ORDER BY id DESC
+            LIMIT 5
+        """)).fetchall()
+
+        return jsonify({
+            "total": total,
+            "with_external_id": with_external,
+            "finished_with_score": finished_with_score,
+            "duplicate_external_top10": [
+                {"external_source": r[0], "external_id": r[1], "count": r[2]} for r in dup_rows
+            ],
+            "sample_last5": [
+                {
+                    "id": s[0],
+                    "external_id": s[1],
+                    "external_source": s[2],
+                    "competition": s[3],
+                    "date": s[4],
+                    "status": s[5],
+                } for s in sample
+            ]
+        }), 200
+    finally:
+        session.close()
+
+
 # =============================
 # API: Teams
 # =============================
