@@ -1,12 +1,18 @@
 # =============================
 # Imports base
 # =============================
+import os
+import sys
+import subprocess
+from pathlib import Path
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-import os
 from sqlalchemy import create_engine, Column, Integer, String, or_
+from sqlalchemy import BigInteger
 from sqlalchemy.orm import sessionmaker, declarative_base
+
 
 # =============================
 # Flask app
@@ -41,28 +47,41 @@ if DATABASE_URL.startswith("sqlite"):
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
+# =============================
+# Models
+# =============================
 class Match(Base):
     __tablename__ = "matches"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # PK interna (dopo migrazione)
+    id = Column(BigInteger, primary_key=True, index=True)
+
+    external_source = Column(String, nullable=False, default="football-data")
+    external_id = Column(BigInteger, nullable=False)
+
     competition = Column(String, nullable=False)
     home_team = Column(String, nullable=False)
     away_team = Column(String, nullable=False)
-    date = Column(String, nullable=False)  # es. "2025-01-15"
-    status = Column(String, nullable=False)  # "FINISHED", "UPCOMING", ecc.
+
+    # utc_date: es. "2025-01-15T20:00:00Z"
+    # date: es. "2025-01-15"
+    utc_date = Column(String, nullable=False)
+    date = Column(String, nullable=False)
+
+    status = Column(String, nullable=False)
     home_goals = Column(Integer, nullable=True)
     away_goals = Column(Integer, nullable=True)
-    season = Column(Integer, nullable=True)  # es. 2024, 2025
+    season = Column(Integer, nullable=True)
 
 
 class MatchContext(Base):
     __tablename__ = "match_context"
 
-    match_id = Column(Integer, primary_key=True, index=True)
+    # Allineato a Match.id (BigInteger)
+    match_id = Column(BigInteger, primary_key=True, index=True)
 
     competition = Column(String, nullable=False)
     season = Column(Integer, nullable=False)
@@ -79,6 +98,7 @@ class MatchContext(Base):
 
 Base.metadata.create_all(bind=engine)
 
+
 # -----------------------------
 # Utility: init info
 # -----------------------------
@@ -92,6 +112,72 @@ def db_info():
 
 
 db_info()
+
+
+# =============================
+# Admin auth helpers
+# =============================
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+def require_admin():
+    req_token = request.headers.get("X-Admin-Token", "")
+    if not ADMIN_TOKEN:
+        return False, (jsonify({"error": "missing ADMIN_TOKEN env var"}), 500)
+    if req_token != ADMIN_TOKEN:
+        return False, (jsonify({"error": "unauthorized"}), 401)
+    return True, None
+
+
+# -----------------------------
+# API: Admin ping
+# -----------------------------
+@app.route("/api/admin/ping", methods=["GET"])
+def admin_ping():
+    return jsonify({"admin_token_set": bool(os.getenv("ADMIN_TOKEN"))}), 200
+
+
+# -----------------------------
+# API: Admin import (sincrono, consigliato su Render)
+# -----------------------------
+@app.route("/api/admin/import", methods=["POST"])
+def admin_import():
+    ok, resp = require_admin()
+    if not ok:
+        return resp
+
+    try:
+        script_path = Path(__file__).resolve().parent / "update_leagues.py"
+
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return jsonify({
+            "ok": True,
+            "stdout": (result.stdout or "")[-4000:],
+            "stderr": (result.stderr or "")[-4000:]
+        }), 200
+
+    except subprocess.CalledProcessError as e:
+        return jsonify({
+            "ok": False,
+            "stdout": (e.stdout or "")[-4000:],
+            "stderr": (e.stderr or "")[-4000:]
+        }), 500
+
+
+# -----------------------------
+# API: Admin update-matches (alias di import)
+# -----------------------------
+@app.route("/api/admin/update-matches", methods=["POST"])
+def update_matches():
+    # Alias dello stesso comportamento sincrono
+    return admin_import()
+
 
 # -----------------------------
 # API: Teams (filtered)
@@ -148,6 +234,10 @@ def get_matches():
                 "home_goals": m.home_goals,
                 "away_goals": m.away_goals,
                 "season": m.season,
+                # utile per debug/compatibilità, ma non obbligatorio:
+                "external_id": m.external_id,
+                "external_source": m.external_source,
+                "utc_date": m.utc_date,
             }
             for m in matches
         ]
@@ -190,15 +280,8 @@ def get_stats():
             q = q.filter(Match.season == season_param)
 
         q = q.filter(or_(Match.home_team == team, Match.away_team == team))
-
         matches = q.order_by(Match.date.asc()).all()
 
-        # =========================
-        # VS TOP/BOTTOM (rank al momento)
-        # =========================
-       # =========================
-# VS TOP/MID/BOTTOM + BUCKETS (rank al momento)
-# =========================
         # =========================
         # VS TOP / MID / BOTTOM + RANK BUCKETS (rank al momento)
         # =========================
@@ -664,7 +747,7 @@ def get_stats():
                 "goal_difference": goal_difference,
                 "avg_scored": avg_scored,
                 "avg_conceded": avg_conceded,
-                "avg_total_goals": avg_total_goals,  # NEW
+                "avg_total_goals": avg_total_goals,
             },
 
             # NEW: over/under multiline + legacy 2.5
@@ -686,9 +769,9 @@ def get_stats():
                 "goals_conceded": home_ga,
                 "avg_scored": (home_gf / home_matches) if home_matches else 0.0,
                 "avg_conceded": (home_ga / home_matches) if home_matches else 0.0,
-                "avg_total_goals": home_avg_total_goals,  # NEW
+                "avg_total_goals": home_avg_total_goals,
 
-                "failed_to_score": {  # NEW
+                "failed_to_score": {
                     "count": home_fts,
                     "rate": (home_fts / home_matches) if home_matches else 0.0
                 },
@@ -713,9 +796,9 @@ def get_stats():
                 "goals_conceded": away_ga,
                 "avg_scored": (away_gf / away_matches) if away_matches else 0.0,
                 "avg_conceded": (away_ga / away_matches) if away_matches else 0.0,
-                "avg_total_goals": away_avg_total_goals,  # NEW
+                "avg_total_goals": away_avg_total_goals,
 
-                "failed_to_score": {  # NEW
+                "failed_to_score": {
                     "count": away_fts,
                     "rate": (away_fts / away_matches) if away_matches else 0.0
                 },
@@ -820,7 +903,6 @@ def get_standings():
         for r in rows:
             r["gd"] = r["gf"] - r["ga"]
 
-        # tie-break: points, gd, gf, played, name
         rows.sort(key=lambda r: (r["points"], r["gd"], r["gf"], r["played"], r["team"]), reverse=True)
 
         for i, r in enumerate(rows, start=1):
@@ -877,76 +959,6 @@ def predict_match():
     finally:
         session.close()
 
-# -----------------------------
-# API: Admin – Update matches
-# -----------------------------
-import subprocess
-import sys
-from pathlib import Path
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
-
-@app.post("/api/admin/update-matches")
-def update_matches():
-    token = request.headers.get("X-Admin-Token")
-
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "missing ADMIN_TOKEN env var"}), 500
-
-    if token != ADMIN_TOKEN:
-        return jsonify({"error": "unauthorized"}), 401
-
-    try:
-        # app.py è in backend/, quindi update_leagues.py è nello stesso folder
-        script_path = Path(__file__).resolve().parent / "update_leagues.py"
-        subprocess.Popen([sys.executable, str(script_path)])
-        return jsonify({"status": "started"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-
 
 if __name__ == "__main__":
     app.run(debug=True)
-
-
-@app.get("/api/admin/ping")
-def admin_ping():
-    return jsonify({"admin_token_set": bool(os.getenv("ADMIN_TOKEN"))}), 200
-
-
-import os
-import sys
-import subprocess
-
-@app.route("/api/admin/import", methods=["POST"])
-def admin_import():
-    token = os.getenv("ADMIN_TOKEN", "")
-    req_token = request.headers.get("X-Admin-Token", "")
-
-    if not token or req_token != token:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        script_path = os.path.join(os.path.dirname(__file__), "update_leagues.py")
-
-        result = subprocess.run(
-            [sys.executable, script_path],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        return jsonify({
-            "ok": True,
-            "stdout": result.stdout[-4000:],
-            "stderr": result.stderr[-4000:]
-        })
-
-    except subprocess.CalledProcessError as e:
-        return jsonify({
-            "ok": False,
-            "stdout": (e.stdout or "")[-4000:],
-            "stderr": (e.stderr or "")[-4000:]
-        }), 500

@@ -7,17 +7,16 @@ if not API_KEY:
     raise RuntimeError("Missing FOOTBALL_DATA_API_KEY env var")
 
 BASE_URL = "https://api.football-data.org/v4/competitions/{code}/matches"
-HEADERS = {
-    "X-Auth-Token": API_KEY
-}
+HEADERS = {"X-Auth-Token": API_KEY}
 
-
+EXTERNAL_SOURCE = "football-data"
 
 # Leghe che vogliamo importare
 LEAGUES = [
     {"code": "SA", "name": "Serie A"},
     {"code": "PL", "name": "Premier League"},
     {"code": "PD", "name": "La Liga"},
+    {"code": "SB", "name": "Serie B"},
 ]
 
 # Stagioni: 2024-2025 e 2025-2026
@@ -32,7 +31,6 @@ def convert_status(api_status: str) -> str:
     """
     if api_status == "FINISHED":
         return "FINISHED"
-    # Tutto il resto lo trattiamo come partita non ancora finita
     return "UPCOMING"
 
 
@@ -41,15 +39,22 @@ def fetch_matches(league_code: str, season: int):
     url = BASE_URL.format(code=league_code)
     params = {"season": season}
 
-    response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+    try:
+        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+    except requests.RequestException as e:
+        print(f"❌ Errore di rete per {league_code} {season}: {e}")
+        return None
 
     if response.status_code != 200:
-        print(f"❌ Errore API per {league_code} {season}:", response.status_code, response.text)
+        print(
+            f"❌ Errore API per {league_code} {season}:",
+            response.status_code,
+            response.text,
+        )
         return None
 
     data = response.json()
     return data.get("matches", [])
-
 
 
 def import_matches(matches, competition_name: str, season: int):
@@ -59,27 +64,47 @@ def import_matches(matches, competition_name: str, season: int):
     updated = 0
 
     for m in matches:
-        match_id = m["id"]
-        status = convert_status(m["status"])
+        match_external_id = m.get("id")
+        if match_external_id is None:
+            # match senza id -> ignoriamo
+            continue
 
+        status = convert_status(m.get("status", ""))
+
+        # Date
+        utc_date = m.get("utcDate") or ""
+        date_only = utc_date[:10] if len(utc_date) >= 10 else ""  # YYYY-MM-DD
+
+        # Teams
+        home_team = (m.get("homeTeam") or {}).get("name") or ""
+        away_team = (m.get("awayTeam") or {}).get("name") or ""
+
+        # Goals (solo se FINISHED)
         home_goals = None
         away_goals = None
-
         if status == "FINISHED":
-            full_time = m["score"].get("fullTime", {})
-            home_goals = full_time.get("home")
-            away_goals = full_time.get("away")
+            ft = ((m.get("score") or {}).get("fullTime")) or {}
+            home_goals = ft.get("home")
+            away_goals = ft.get("away")
 
-        db_match = session.query(Match).filter(Match.id == match_id).first()
+        # Cerca per (external_source, external_id) — non per PK interna!
+        db_match = (
+            session.query(Match)
+            .filter(Match.external_source == EXTERNAL_SOURCE)
+            .filter(Match.external_id == match_external_id)
+            .first()
+        )
 
         if db_match is None:
             # Nuova partita
             new_match = Match(
-                id=match_id,
+                external_source=EXTERNAL_SOURCE,
+                external_id=match_external_id,
                 competition=competition_name,
-                home_team=m["homeTeam"]["name"],
-                away_team=m["awayTeam"]["name"],
-                date=m["utcDate"],
+                home_team=home_team,
+                away_team=away_team,
+                utc_date=utc_date,
+                date=date_only,
                 status=status,
                 home_goals=home_goals,
                 away_goals=away_goals,
@@ -88,21 +113,26 @@ def import_matches(matches, competition_name: str, season: int):
             session.add(new_match)
             inserted += 1
         else:
-            # Aggiorna eventualmente (es. risultato appena finito)
+            # Aggiorna dati base
             db_match.competition = competition_name
-            db_match.date = m["utcDate"]
+            db_match.home_team = home_team
+            db_match.away_team = away_team
+            db_match.utc_date = utc_date
+            db_match.date = date_only
             db_match.status = status
-            db_match.home_goals = home_goals
-            db_match.away_goals = away_goals
             db_match.season = season
+
+            # NON sovrascrivere gol se non FINISHED (evita di cancellare score)
+            if status == "FINISHED":
+                db_match.home_goals = home_goals
+                db_match.away_goals = away_goals
+
             updated += 1
 
     session.commit()
     session.close()
 
-    print(
-        f"✅ {competition_name} {season} → Inseriti: {inserted} | Aggiornati: {updated}"
-    )
+    print(f"✅ {competition_name} {season} → Inseriti: {inserted} | Aggiornati: {updated}")
 
 
 def main():
