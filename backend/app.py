@@ -410,7 +410,7 @@ def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
 
         "last5_ppg_weight": 0.8,
 
-        "draw_base": 2.5,
+        "draw_base": 3.2,
     }
     if weights:
         W.update(weights)
@@ -508,7 +508,7 @@ def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
         )
 
         # Draw: più probabile se i punteggi sono vicini
-        draw_score = max(0.0, W["draw_base"] - abs(home_score))
+        draw_score = max(0.2, W["draw_base"] - 0.7 * abs(home_score))
 
         p_home, p_draw, p_away = _softmax3(home_score, draw_score, -home_score)
 
