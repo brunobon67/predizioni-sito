@@ -401,9 +401,9 @@ def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
         "away_win_weight": 3.0,
         "away_loss_weight": 2.0,
 
-        "vs_band_weight": 2.0,
-        "vs_band_home_weight": 1.0,
-        "vs_band_away_weight": 1.0,
+        "vs_band_weight": 0.8,
+        "vs_band_home_weight": 0.4,
+        "vs_band_away_weight": 0.4,
 
         "gf_diff_weight": 1.5,
         "ga_diff_weight": 1.2,
@@ -468,6 +468,20 @@ def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
             total_teams=total_teams,
             band_size=5
         )
+
+# Shrinkage: se i match vs band sono pochi, spingi i PPG verso 1.0 (neutro)
+def shrink_ppg(ppg, n, k=8):
+    # k più alto = più prudente
+    return (ppg * n + 1.0 * k) / (n + k) if (n + k) else 1.0
+
+home_vs_ppg = shrink_ppg(home_vs_ppg, hv_mp)
+home_vs_home_ppg = shrink_ppg(home_vs_home_ppg, hv_hmp)
+home_vs_away_ppg = shrink_ppg(home_vs_away_ppg, hv_amp)
+
+away_vs_ppg = shrink_ppg(away_vs_ppg, av_mp)
+away_vs_home_ppg = shrink_ppg(away_vs_home_ppg, av_hmp)
+away_vs_away_ppg = shrink_ppg(away_vs_away_ppg, av_amp)
+
 
         # 1) Rank score
         rank_diff = (away_rank_before - home_rank_before)  # positivo se home meglio (rank più basso)
