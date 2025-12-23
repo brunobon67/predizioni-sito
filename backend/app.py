@@ -469,18 +469,7 @@ def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
             band_size=5
         )
 
-# Shrinkage: se i match vs band sono pochi, spingi i PPG verso 1.0 (neutro)
-def shrink_ppg(ppg, n, k=8):
-    # k più alto = più prudente
-    return (ppg * n + 1.0 * k) / (n + k) if (n + k) else 1.0
 
-home_vs_ppg = shrink_ppg(home_vs_ppg, hv_mp)
-home_vs_home_ppg = shrink_ppg(home_vs_home_ppg, hv_hmp)
-home_vs_away_ppg = shrink_ppg(home_vs_away_ppg, hv_amp)
-
-away_vs_ppg = shrink_ppg(away_vs_ppg, av_mp)
-away_vs_home_ppg = shrink_ppg(away_vs_home_ppg, av_hmp)
-away_vs_away_ppg = shrink_ppg(away_vs_away_ppg, av_amp)
 
 
         # 1) Rank score
