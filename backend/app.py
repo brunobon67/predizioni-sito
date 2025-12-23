@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import math
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -107,6 +108,7 @@ def require_admin():
         return False, (jsonify({"error": "unauthorized"}), 401)
     return True, None
 
+
 def _rebuild_context_all_internal(only_finished: bool = True, limit=None):
     """
     Ricostruisce match_context per tutte le coppie (competition, season).
@@ -212,7 +214,366 @@ def _rebuild_context_all_internal(only_finished: bool = True, limit=None):
         session.close()
 
 
+# =============================
+# Rule-based predictor (points/weights) for 1X2
+# =============================
+def _safe_div(a: float, b: float) -> float:
+    return float(a) / float(b) if b else 0.0
 
+
+def _softmax3(a: float, b: float, c: float):
+    m = max(a, b, c)
+    ea = math.exp(a - m)
+    eb = math.exp(b - m)
+    ec = math.exp(c - m)
+    s = ea + eb + ec
+    return ea / s, eb / s, ec / s
+
+
+def _points_from_result(gf: int, ga: int) -> int:
+    if gf > ga:
+        return 3
+    if gf == ga:
+        return 1
+    return 0
+
+
+def _get_ctx(session, match_id: int):
+    return session.query(MatchContext).filter(MatchContext.match_id == match_id).first()
+
+
+def _team_past_matches(session, team: str, competition: str, season: int, date_cutoff: str):
+    return (
+        session.query(Match)
+        .filter(Match.status == "FINISHED")
+        .filter(Match.competition == competition)
+        .filter(Match.season == season)
+        .filter(Match.date < date_cutoff)
+        .filter(or_(Match.home_team == team, Match.away_team == team))
+        .order_by(Match.date.asc(), Match.id.asc())
+        .all()
+    )
+
+
+def _compute_basic_splits(team: str, matches):
+    def init():
+        return {"mp": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "pts": 0, "seq_pts": []}
+
+    overall = init()
+    home = init()
+    away = init()
+
+    for m in matches:
+        hg = m.home_goals or 0
+        ag = m.away_goals or 0
+        is_home = (m.home_team == team)
+
+        if is_home:
+            gf, ga = hg, ag
+            bucket = home
+        else:
+            gf, ga = ag, hg
+            bucket = away
+
+        for b in (overall, bucket):
+            b["mp"] += 1
+            b["gf"] += gf
+            b["ga"] += ga
+            pts = _points_from_result(gf, ga)
+            b["pts"] += pts
+            b["seq_pts"].append(pts)
+            if gf > ga:
+                b["w"] += 1
+            elif gf == ga:
+                b["d"] += 1
+            else:
+                b["l"] += 1
+
+    def pack(b):
+        mp = b["mp"]
+        return {
+            "matches": mp,
+            "wins": b["w"],
+            "draws": b["d"],
+            "losses": b["l"],
+            "win_rate": _safe_div(b["w"], mp),
+            "draw_rate": _safe_div(b["d"], mp),
+            "loss_rate": _safe_div(b["l"], mp),
+            "ppg": _safe_div(b["pts"], mp),
+            "avg_gf": _safe_div(b["gf"], mp),
+            "avg_ga": _safe_div(b["ga"], mp),
+        }
+
+    out = {"overall": pack(overall), "home": pack(home), "away": pack(away)}
+    last5 = overall["seq_pts"][-5:]
+    out["overall"]["last5_ppg"] = _safe_div(sum(last5), len(last5)) if last5 else 0.0
+    return out
+
+
+def _band_label(total_teams: int, rank: int, band_size: int = 5) -> str:
+    if not total_teams or not rank:
+        return "unknown"
+    start = ((rank - 1) // band_size) * band_size + 1
+    end = min(total_teams, start + band_size - 1)
+    return f"{start}-{end}"
+
+
+def _compute_vs_opponent_band_ppg(
+    session,
+    team: str,
+    competition: str,
+    season: int,
+    date_cutoff: str,
+    opponent_rank_before: int,
+    total_teams: int,
+    band_size: int = 5
+):
+    if not opponent_rank_before or not total_teams:
+        return 0.0, 0.0, 0.0, 0, 0, 0
+
+    target_band = _band_label(total_teams, opponent_rank_before, band_size)
+
+    matches = _team_past_matches(session, team, competition, season, date_cutoff)
+    if not matches:
+        return 0.0, 0.0, 0.0, 0, 0, 0
+
+    ids = [m.id for m in matches]
+    ctx_rows = session.query(MatchContext).filter(MatchContext.match_id.in_(ids)).all()
+    ctx_by_id = {c.match_id: c for c in ctx_rows}
+
+    def init():
+        return {"mp": 0, "pts": 0}
+
+    o = init()
+    h = init()
+    a = init()
+
+    for m in matches:
+        ctx = ctx_by_id.get(m.id)
+        if not ctx:
+            continue
+
+        hg = m.home_goals or 0
+        ag = m.away_goals or 0
+        is_home = (m.home_team == team)
+
+        if is_home:
+            gf, ga = hg, ag
+            opp_rank = ctx.away_rank_before
+            bucket = h
+        else:
+            gf, ga = ag, hg
+            opp_rank = ctx.home_rank_before
+            bucket = a
+
+        b = _band_label(total_teams, opp_rank, band_size)
+        if b != target_band:
+            continue
+
+        pts = _points_from_result(gf, ga)
+        o["mp"] += 1
+        o["pts"] += pts
+        bucket["mp"] += 1
+        bucket["pts"] += pts
+
+    return (
+        _safe_div(o["pts"], o["mp"]),
+        _safe_div(h["pts"], h["mp"]),
+        _safe_div(a["pts"], a["mp"]),
+        o["mp"], h["mp"], a["mp"]
+    )
+
+
+def predict_rule_based(match_id: int, weights: dict | None = None) -> dict:
+    """
+    Modello a punteggio (trasparente) che usa:
+    - ranking prima del match (match_context)
+    - performance casa/trasferta
+    - performance vs fascia ranking dell'avversario (bands) con split casa/trasferta
+    - gol fatti/subiti (casa vs trasferta)
+    - forma ultime 5 (PPG)
+    """
+    W = {
+        "rank_pos_weight": 0.50,
+
+        "home_win_weight": 3.0,
+        "home_loss_weight": 2.0,
+        "away_win_weight": 3.0,
+        "away_loss_weight": 2.0,
+
+        "vs_band_weight": 2.0,
+        "vs_band_home_weight": 1.0,
+        "vs_band_away_weight": 1.0,
+
+        "gf_diff_weight": 1.5,
+        "ga_diff_weight": 1.2,
+
+        "last5_ppg_weight": 0.8,
+
+        "draw_base": 2.5,
+    }
+    if weights:
+        W.update(weights)
+
+    session = SessionLocal()
+    try:
+        m = session.query(Match).filter(Match.id == match_id).first()
+        if not m:
+            return {"ok": False, "error": "Match non trovato", "match_id": int(match_id)}
+
+        if m.season is None:
+            return {"ok": False, "error": "Match.season mancante", "match_id": int(match_id)}
+
+        competition = m.competition
+        season = int(m.season)
+        date_cutoff = m.date
+        home_team = m.home_team
+        away_team = m.away_team
+
+        ctx = _get_ctx(session, m.id)
+        if not ctx:
+            # fallback neutro (meglio di crashare)
+            total_teams = 20
+            home_rank_before = total_teams // 2
+            away_rank_before = total_teams // 2
+        else:
+            total_teams = ctx.total_teams
+            home_rank_before = ctx.home_rank_before
+            away_rank_before = ctx.away_rank_before
+
+        home_hist = _team_past_matches(session, home_team, competition, season, date_cutoff)
+        away_hist = _team_past_matches(session, away_team, competition, season, date_cutoff)
+
+        home_stats = _compute_basic_splits(home_team, home_hist)
+        away_stats = _compute_basic_splits(away_team, away_hist)
+
+        # PPG vs band dell'avversario (overall + split)
+        home_vs_ppg, home_vs_home_ppg, home_vs_away_ppg, hv_mp, hv_hmp, hv_amp = _compute_vs_opponent_band_ppg(
+            session=session,
+            team=home_team,
+            competition=competition,
+            season=season,
+            date_cutoff=date_cutoff,
+            opponent_rank_before=away_rank_before,
+            total_teams=total_teams,
+            band_size=5
+        )
+        away_vs_ppg, away_vs_home_ppg, away_vs_away_ppg, av_mp, av_hmp, av_amp = _compute_vs_opponent_band_ppg(
+            session=session,
+            team=away_team,
+            competition=competition,
+            season=season,
+            date_cutoff=date_cutoff,
+            opponent_rank_before=home_rank_before,
+            total_teams=total_teams,
+            band_size=5
+        )
+
+        # 1) Rank score
+        rank_diff = (away_rank_before - home_rank_before)  # positivo se home meglio (rank più basso)
+        rank_score = rank_diff * W["rank_pos_weight"]
+
+        # 2) Home performance (home team at home)
+        hp = home_stats["home"]
+        home_perf_score = (hp["win_rate"] * W["home_win_weight"]) - (hp["loss_rate"] * W["home_loss_weight"])
+
+        # 3) Away performance (away team away) -> sottraiamo
+        ap = away_stats["away"]
+        away_perf_score = (ap["win_rate"] * W["away_win_weight"]) - (ap["loss_rate"] * W["away_loss_weight"])
+
+        # 4) vs opponent band (overall + split)
+        vs_score = (
+            (home_vs_ppg - away_vs_ppg) * W["vs_band_weight"]
+            + (home_vs_home_ppg - away_vs_home_ppg) * W["vs_band_home_weight"]
+            + (home_vs_away_ppg - away_vs_away_ppg) * W["vs_band_away_weight"]
+        )
+
+        # 5) Goals (home home vs away away)
+        gf_diff = (hp["avg_gf"] - ap["avg_gf"])
+        ga_diff = (ap["avg_ga"] - hp["avg_ga"])  # positivo se away concede più di home
+        goals_score = (gf_diff * W["gf_diff_weight"]) + (ga_diff * W["ga_diff_weight"])
+
+        # 6) Last 5 form (PPG)
+        form_diff = (home_stats["overall"]["last5_ppg"] - away_stats["overall"]["last5_ppg"])
+        form_score = form_diff * W["last5_ppg_weight"]
+
+        # Total score
+        home_score = (
+            rank_score
+            + home_perf_score
+            - away_perf_score
+            + vs_score
+            + goals_score
+            + form_score
+        )
+
+        # Draw: più probabile se i punteggi sono vicini
+        draw_score = max(0.0, W["draw_base"] - abs(home_score))
+
+        p_home, p_draw, p_away = _softmax3(home_score, draw_score, -home_score)
+
+        return {
+            "ok": True,
+            "match_id": int(m.id),
+            "competition": competition,
+            "season": season,
+            "date": date_cutoff,
+            "home_team": home_team,
+            "away_team": away_team,
+            "model": "rules_v1",
+            "probabilities": {
+                "home_win": p_home,
+                "draw": p_draw,
+                "away_win": p_away,
+            },
+            "debug": {
+                "ranks": {
+                    "home_rank_before": home_rank_before,
+                    "away_rank_before": away_rank_before,
+                    "total_teams": total_teams,
+                    "rank_diff": rank_diff,
+                },
+                "components": {
+                    "rank_score": rank_score,
+                    "home_perf_score": home_perf_score,
+                    "away_perf_score_subtracted": -away_perf_score,
+                    "vs_score": vs_score,
+                    "goals_score": goals_score,
+                    "form_score": form_score,
+                    "home_score_total": home_score,
+                    "draw_score": draw_score,
+                },
+                "inputs": {
+                    "home_home": hp,
+                    "away_away": ap,
+                    "home_last5_ppg": home_stats["overall"]["last5_ppg"],
+                    "away_last5_ppg": away_stats["overall"]["last5_ppg"],
+                    "home_vs_band": {
+                        "ppg_overall": home_vs_ppg,
+                        "ppg_home": home_vs_home_ppg,
+                        "ppg_away": home_vs_away_ppg,
+                        "matches_overall": hv_mp,
+                        "matches_home": hv_hmp,
+                        "matches_away": hv_amp,
+                    },
+                    "away_vs_band": {
+                        "ppg_overall": away_vs_ppg,
+                        "ppg_home": away_vs_home_ppg,
+                        "ppg_away": away_vs_away_ppg,
+                        "matches_overall": av_mp,
+                        "matches_home": av_hmp,
+                        "matches_away": av_amp,
+                    },
+                },
+            },
+        }
+    finally:
+        session.close()
+
+
+# =============================
+# Admin endpoints
+# =============================
 @app.route("/api/admin/ping", methods=["GET"])
 def admin_ping():
     return jsonify({"admin_token_set": bool(os.getenv("ADMIN_TOKEN"))}), 200
@@ -222,7 +583,18 @@ def admin_ping():
 def admin_import():
     ok, resp = require_admin()
     if not ok:
-            # AUTO: rebuild context dopo import (così top/mid/bottom + ranking funzionano sempre)
+        return resp
+
+    try:
+        script_path = Path(__file__).resolve().parent / "update_leagues.py"
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # AUTO rebuild dopo import (così top/mid/bottom + ranking funzionano sempre)
         rebuild_summary = _rebuild_context_all_internal(only_finished=True)
 
         return jsonify({
@@ -232,34 +604,16 @@ def admin_import():
             "context_rebuild": rebuild_summary
         }), 200
 
-
-    try:
-        script_path = Path(__file__).resolve().parent / "update_leagues.py"
-
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        return jsonify({
-            "ok": True,
-            "stdout": (result.stdout or "")[-4000:],
-            "stderr": (result.stderr or "")[-4000:]
-        }), 200
-
     except subprocess.CalledProcessError as e:
         return jsonify({
             "ok": False,
             "stdout": (e.stdout or "")[-4000:],
-            "stderr": (e.stderr or "")[-4000:]
+            "stderr": (e.stderr or "")[-4000:],
         }), 500
 
 
 @app.route("/api/admin/update-matches", methods=["POST"])
 def admin_update_matches():
-    # alias dell'import sincrono
     return admin_import()
 
 
@@ -439,110 +793,10 @@ def admin_rebuild_context_all():
 
     payload = request.get_json(force=True) or {}
     only_finished = payload.get("only_finished", True)
-    limit = payload.get("limit")  # opzionale per test
+    limit = payload.get("limit")
 
-    session = SessionLocal()
-    try:
-        where = "WHERE status='FINISHED'" if only_finished else ""
-        lim_sql = "LIMIT :lim" if limit else ""
-        params = {"lim": int(limit)} if limit else {}
-
-        pairs = session.execute(text(f"""
-            SELECT competition, season
-            FROM matches
-            {where}
-            GROUP BY competition, season
-            ORDER BY competition, season
-            {lim_sql}
-        """), params).fetchall()
-
-        pairs = [(p[0], int(p[1])) for p in pairs if p[0] is not None and p[1] is not None]
-
-        results = []
-
-        for comp, seas in pairs:
-            matches = (
-                session.query(Match)
-                .filter(Match.status == "FINISHED")
-                .filter(Match.competition == comp)
-                .filter(Match.season == seas)
-                .order_by(Match.date.asc(), Match.id.asc())
-                .all()
-            )
-
-            if not matches:
-                results.append({"competition": comp, "season": seas, "inserted": 0, "total_teams": 0})
-                continue
-
-            teams = set()
-            for m in matches:
-                teams.add(m.home_team)
-                teams.add(m.away_team)
-            teams = sorted(list(teams))
-            total_teams = len(teams)
-
-            session.execute(text("""
-                DELETE FROM match_context
-                WHERE competition = :c AND season = :s
-            """), {"c": comp, "s": seas})
-
-            table = {t: {"points": 0, "gf": 0, "ga": 0, "played": 0} for t in teams}
-
-            def rank_map():
-                rows = []
-                for t, v in table.items():
-                    gd = v["gf"] - v["ga"]
-                    rows.append((t, v["points"], gd, v["gf"], v["played"]))
-                rows.sort(key=lambda r: (r[1], r[2], r[3], r[4], r[0]), reverse=True)
-                return {team: idx + 1 for idx, (team, *_rest) in enumerate(rows)}
-
-            inserted = 0
-
-            for m in matches:
-                ranks_before = rank_map()
-                session.add(MatchContext(
-                    match_id=m.id,
-                    competition=comp,
-                    season=seas,
-                    date=m.date,
-                    home_team=m.home_team,
-                    away_team=m.away_team,
-                    home_rank_before=ranks_before.get(m.home_team, total_teams),
-                    away_rank_before=ranks_before.get(m.away_team, total_teams),
-                    total_teams=total_teams
-                ))
-                inserted += 1
-
-                hg = m.home_goals or 0
-                ag = m.away_goals or 0
-
-                table[m.home_team]["played"] += 1
-                table[m.away_team]["played"] += 1
-
-                table[m.home_team]["gf"] += hg
-                table[m.home_team]["ga"] += ag
-                table[m.away_team]["gf"] += ag
-                table[m.away_team]["ga"] += hg
-
-                if hg > ag:
-                    table[m.home_team]["points"] += 3
-                elif hg < ag:
-                    table[m.away_team]["points"] += 3
-                else:
-                    table[m.home_team]["points"] += 1
-                    table[m.away_team]["points"] += 1
-
-            session.commit()
-            results.append({"competition": comp, "season": seas, "inserted": inserted, "total_teams": total_teams})
-
-        return jsonify({
-            "ok": True,
-            "only_finished": only_finished,
-            "pairs": len(pairs),
-            "results": results
-        }), 200
-    finally:
-        session.close()
+    summary = _rebuild_context_all_internal(only_finished=bool(only_finished), limit=limit)
+    return jsonify(summary), 200
 
 
 # =============================
@@ -610,20 +864,10 @@ def get_matches():
 
 
 # =============================
-# API: Stats (complete, includes top/mid/bottom + rank bands via MatchContext)
+# API: Stats
 # =============================
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
-    """
-    Statistiche calcolate SOLO sulle partite passate (status='FINISHED').
-
-    Parametri:
-      - team (obbligatorio): nome squadra (es. "Juventus FC")
-      - competition (opzionale): filtra per competizione
-      - season (opzionale): stagione (es. 2024)
-      - top_n (opzionale): default 6
-      - bottom_n (opzionale): default 5
-    """
     team = request.args.get("team")
     competition = request.args.get("competition")
     season_param = request.args.get("season", type=int)
@@ -741,16 +985,15 @@ def get_stats():
                 return None
 
             missing_ctx = 0
-            for m in matches:
-                ctx = ctx_by_id.get(m.id)
+            for mm in matches:
+                ctx = ctx_by_id.get(mm.id)
                 if not ctx:
                     missing_ctx += 1
                     continue
 
-                is_home = (m.home_team == team)
-
-                hg = m.home_goals or 0
-                ag = m.away_goals or 0
+                is_home = (mm.home_team == team)
+                hg = mm.home_goals or 0
+                ag = mm.away_goals or 0
 
                 if is_home:
                     gf, ga = hg, ag
@@ -837,12 +1080,12 @@ def get_stats():
         home_matches_list = []
         away_matches_list = []
 
-        for m in matches:
-            hg = m.home_goals or 0
-            ag = m.away_goals or 0
+        for mm in matches:
+            hg = mm.home_goals or 0
+            ag = mm.away_goals or 0
             total_goals = hg + ag
 
-            if m.home_team == team:
+            if mm.home_team == team:
                 gf, ga = hg, ag
                 is_home_game = True
             else:
@@ -891,12 +1134,12 @@ def get_stats():
                 home_matches += 1
                 home_gf += gf
                 home_ga += ga
-                home_matches_list.append(m)
+                home_matches_list.append(mm)
             else:
                 away_matches += 1
                 away_gf += gf
                 away_ga += ga
-                away_matches_list.append(m)
+                away_matches_list.append(mm)
 
             for line in OU_LINES:
                 if total_goals > line:
@@ -963,15 +1206,15 @@ def get_stats():
 
             gf_sum = ga_sum = 0
             last_matches = match_list[-last_n:] if last_n else []
-            for mm in last_matches:
-                hg = mm.home_goals or 0
-                ag = mm.away_goals or 0
-                if mm.home_team == team:
-                    gf_sum += hg
-                    ga_sum += ag
+            for mmm in last_matches:
+                hg2 = mmm.home_goals or 0
+                ag2 = mmm.away_goals or 0
+                if mmm.home_team == team:
+                    gf_sum += hg2
+                    ga_sum += ag2
                 else:
-                    gf_sum += ag
-                    ga_sum += hg
+                    gf_sum += ag2
+                    ga_sum += hg2
 
             return {
                 "record": f"{w}W-{d}D-{l}L",
@@ -993,11 +1236,7 @@ def get_stats():
         away_form_last_10 = form_block(away_results_sequence, away_matches_list, 10)
 
         def pack_over_under_multiline(ou_dict, mp, btts_count, legacy_over25=None, legacy_under25=None):
-            out = {
-                "btts": btts_count,
-                "btts_rate": (btts_count / mp) if mp else 0.0,
-                "lines": {}
-            }
+            out = {"btts": btts_count, "btts_rate": (btts_count / mp) if mp else 0.0, "lines": {}}
             for line, v in ou_dict.items():
                 over_cnt = v["over"]
                 under_cnt = v["under"]
@@ -1036,10 +1275,7 @@ def get_stats():
             "home_win_rate": home_win_rate,
             "away_win_rate": away_win_rate,
 
-            "failed_to_score": {
-                "count": fts,
-                "rate": (fts / matches_played) if matches_played else 0.0
-            },
+            "failed_to_score": {"count": fts, "rate": (fts / matches_played) if matches_played else 0.0},
 
             "goals": {
                 "scored": goals_scored,
@@ -1050,10 +1286,7 @@ def get_stats():
                 "avg_total_goals": avg_total_goals,
             },
 
-            "over_under": pack_over_under_multiline(
-                ou_overall, matches_played, btts,
-                legacy_over25=over_25, legacy_under25=under_25
-            ),
+            "over_under": pack_over_under_multiline(ou_overall, matches_played, btts, legacy_over25=over_25, legacy_under25=under_25),
 
             "home": {
                 "matches": home_matches,
@@ -1063,22 +1296,13 @@ def get_stats():
                 "win_rate": home_win_rate,
                 "draw_rate": home_draw_rate,
                 "loss_rate": home_loss_rate,
-
                 "goals_scored": home_gf,
                 "goals_conceded": home_ga,
                 "avg_scored": (home_gf / home_matches) if home_matches else 0.0,
                 "avg_conceded": (home_ga / home_matches) if home_matches else 0.0,
                 "avg_total_goals": home_avg_total_goals,
-
-                "failed_to_score": {
-                    "count": home_fts,
-                    "rate": (home_fts / home_matches) if home_matches else 0.0
-                },
-
-                "over_under": pack_over_under_multiline(
-                    ou_home, home_matches, home_btts,
-                    legacy_over25=home_over_25, legacy_under25=home_under_25
-                ),
+                "failed_to_score": {"count": home_fts, "rate": (home_fts / home_matches) if home_matches else 0.0},
+                "over_under": pack_over_under_multiline(ou_home, home_matches, home_btts, legacy_over25=home_over_25, legacy_under25=home_under_25),
                 "form": {"last_5": home_form_last_5, "last_10": home_form_last_10},
             },
 
@@ -1090,30 +1314,17 @@ def get_stats():
                 "win_rate": away_win_rate,
                 "draw_rate": away_draw_rate,
                 "loss_rate": away_loss_rate,
-
                 "goals_scored": away_gf,
                 "goals_conceded": away_ga,
                 "avg_scored": (away_gf / away_matches) if away_matches else 0.0,
                 "avg_conceded": (away_ga / away_matches) if away_matches else 0.0,
                 "avg_total_goals": away_avg_total_goals,
-
-                "failed_to_score": {
-                    "count": away_fts,
-                    "rate": (away_fts / away_matches) if away_matches else 0.0
-                },
-
-                "over_under": pack_over_under_multiline(
-                    ou_away, away_matches, away_btts,
-                    legacy_over25=away_over_25, legacy_under25=away_under_25
-                ),
+                "failed_to_score": {"count": away_fts, "rate": (away_fts / away_matches) if away_matches else 0.0},
+                "over_under": pack_over_under_multiline(ou_away, away_matches, away_btts, legacy_over25=away_over_25, legacy_under25=away_under_25),
                 "form": {"last_5": away_form_last_5, "last_10": away_form_last_10},
             },
 
-            "form": {
-                "last_5": form_last_5,
-                "last_10": form_last_10,
-            },
-
+            "form": {"last_5": form_last_5, "last_10": form_last_10},
             "vs_rank_groups": vs_rank_groups,
         }
 
@@ -1122,6 +1333,9 @@ def get_stats():
         session.close()
 
 
+# =============================
+# API: Standings
+# =============================
 @app.route("/api/standings", methods=["GET"])
 def get_standings():
     competition = request.args.get("competition")
@@ -1142,25 +1356,15 @@ def get_standings():
         )
 
         matches = q.all()
-
         table = {}
 
         def ensure(team_name: str):
             if team_name not in table:
-                table[team_name] = {
-                    "team": team_name,
-                    "points": 0,
-                    "played": 0,
-                    "wins": 0,
-                    "draws": 0,
-                    "losses": 0,
-                    "gf": 0,
-                    "ga": 0,
-                }
+                table[team_name] = {"team": team_name, "points": 0, "played": 0, "wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0}
 
-        for m in matches:
-            home, away = m.home_team, m.away_team
-            hg, ag = m.home_goals or 0, m.away_goals or 0
+        for mm in matches:
+            home, away = mm.home_team, mm.away_team
+            hg, ag = mm.home_goals or 0, mm.away_goals or 0
 
             ensure(home)
             ensure(away)
@@ -1200,33 +1404,23 @@ def get_standings():
         session.close()
 
 
+# =============================
+# API: Predict (rule-based)
+# =============================
 @app.route("/api/predict", methods=["POST"])
 def predict_match():
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
     match_id = data.get("match_id")
-    model = data.get("model")
+    model = data.get("model", "rules_v1")
 
-    if not match_id or not model:
-        return jsonify({"error": "match_id e model sono obbligatori"}), 400
+    if not match_id:
+        return jsonify({"error": "match_id obbligatorio"}), 400
 
-    session = SessionLocal()
-    try:
-        match = session.query(Match).filter(Match.id == match_id).first()
-        if not match:
-            return jsonify({"error": "Match non trovato"}), 404
+    if model not in ("rules_v1", "rules"):
+        return jsonify({"error": f"model non supportato: {model}"}), 400
 
-        return jsonify({
-            "match_id": match_id,
-            "model": model,
-            "probabilities": {
-                "home_win": 0.40,
-                "draw": 0.30,
-                "away_win": 0.30,
-                "explanation": f"Modello: {model}. Placeholder."
-            }
-        })
-    finally:
-        session.close()
+    out = predict_rule_based(int(match_id))
+    return jsonify(out), (200 if out.get("ok") else 400)
 
 
 if __name__ == "__main__":
