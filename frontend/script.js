@@ -70,7 +70,6 @@ function setBar(id, fraction) {
    Helpers: dynamic UI injection
 ========================= */
 function ensureExtraStatsUI() {
-  // Card "Goal & medie"
   const goalsCard = (() => {
     const gf = $("stats-adv-gf");
     if (!gf) return null;
@@ -91,7 +90,6 @@ function ensureExtraStatsUI() {
     }
   }
 
-  // Card "Under / Over 2,5 & BTTS"
   const ouCard = (() => {
     const over25 = $("stats-over25");
     if (!over25) return null;
@@ -139,11 +137,14 @@ function renderExtraOULines(overUnderBlock) {
 }
 
 /* =========================
-   NEW: VS ranking bands table (A+B)
+   VS ranking bands table
 ========================= */
+let currentView = "overall";
+let lastStatsPayload = null;
+
 function renderVsBandsTable(vsg) {
   const body = document.getElementById("vs-bands-body");
-  if (!body) return; // se non hai ancora aggiornato l'HTML, non fa nulla
+  if (!body) return;
 
   if (!vsg || vsg.note || !Array.isArray(vsg.rank_bands)) {
     body.innerHTML = `<tr><td colspan="8" class="muted">Seleziona competizione + stagione.</td></tr>`;
@@ -187,36 +188,27 @@ function renderVsBandsTable(vsg) {
 }
 
 /* =========================
-   Stats: fetch teams + fetch stats + view toggle
+   Stats
 ========================= */
-let lastStatsPayload = null;
-let currentView = "overall"; // overall | home | away
-
 function getStatsViewBlock(stats) {
   if (!stats) return null;
   if (currentView === "home") return stats.home;
   if (currentView === "away") return stats.away;
-  return stats; // overall
+  return stats;
 }
 
 function renderStats(stats) {
   if (!stats) return;
-
   ensureExtraStatsUI();
 
-  // header pills
   setText("stats-team-name", stats.team || "-");
   setText("stats-competition-name", stats.competition === "All" ? "Tutte" : (stats.competition || "Tutte"));
   setText("stats-season-name", stats.season === "All" ? "Tutte" : (stats.season || "Tutte"));
 
-  // scegli il blocco in base a Totale/Casa/Trasferta
   const view = getStatsViewBlock(stats) || {};
-
-  // matches played
   const played = (currentView === "overall") ? stats.matches_played : (view.matches || 0);
   setText("stats-played", played);
 
-  // W/D/L + rates (KPI)
   const wins = view.wins ?? stats.wins ?? 0;
   const draws = view.draws ?? stats.draws ?? 0;
   const losses = view.losses ?? stats.losses ?? 0;
@@ -237,13 +229,11 @@ function renderStats(stats) {
   setBar("bar-draws", drawRate);
   setBar("bar-losses", lossRate);
 
-  // Goals KPI
   const goalsFor = (currentView === "overall") ? (stats.goals_scored ?? 0) : (view.goals_scored ?? 0);
   const goalsAgainst = (currentView === "overall") ? (stats.goals_conceded ?? 0) : (view.goals_conceded ?? 0);
   setText("stats-goals-for", goalsFor);
   setText("stats-goals-against", goalsAgainst);
 
-  // VS Top/Mid/Bottom + Bands
   const vsg = stats.vs_rank_groups || null;
   if (!vsg || vsg.note) {
     setText("vs-top-n", vsg?.top_n ?? "6");
@@ -253,7 +243,6 @@ function renderStats(stats) {
     setText("vs-top-winrate", "0.0%");
     setText("vs-top-matches", "0");
 
-    // NEW: mid
     setText("vs-mid-wdl", "0W-0D-0L");
     setText("vs-mid-winrate", "0.0%");
     setText("vs-mid-matches", "0");
@@ -265,7 +254,6 @@ function renderStats(stats) {
     setText("vs-bottom-threshold", "-");
     setText("vs-total-teams", "-");
 
-    // NEW: bands table placeholder
     renderVsBandsTable(null);
   } else {
     const scope = currentView === "home" ? vsg.home : (currentView === "away" ? vsg.away : vsg);
@@ -281,7 +269,6 @@ function renderStats(stats) {
     setText("vs-top-winrate", pct(top.win_rate));
     setText("vs-top-matches", top.matches);
 
-    // NEW: mid
     setText("vs-mid-wdl", `${mid.wins}W-${mid.draws}D-${mid.losses}L`);
     setText("vs-mid-winrate", pct(mid.win_rate));
     setText("vs-mid-matches", mid.matches);
@@ -293,11 +280,9 @@ function renderStats(stats) {
     setText("vs-bottom-threshold", vsg.bottom_threshold_rank);
     setText("vs-total-teams", vsg.total_teams);
 
-    // NEW: bands table (respects Totale/Casa/Trasferta)
     renderVsBandsTable(vsg);
   }
 
-  // Advanced: Goal & medie
   const avgGF = (currentView === "overall") ? (stats.goals?.avg_scored ?? 0) : (view.avg_scored ?? 0);
   const avgGA = (currentView === "overall") ? (stats.goals?.avg_conceded ?? 0) : (view.avg_conceded ?? 0);
 
@@ -312,13 +297,11 @@ function renderStats(stats) {
   setText("stats-avg-gf", num(avgGF, 2));
   setText("stats-avg-ga", num(avgGA, 2));
 
-  // NEW: avg_total_goals
   const avgTotalGoals = (currentView === "overall")
     ? (stats.goals?.avg_total_goals ?? 0)
     : (view.avg_total_goals ?? 0);
   setText("stats-avg-total-goals", num(avgTotalGoals, 2));
 
-  // NEW: failed_to_score
   const fts = (currentView === "overall")
     ? (stats.failed_to_score?.count ?? 0)
     : (view.failed_to_score?.count ?? 0);
@@ -329,7 +312,6 @@ function renderStats(stats) {
   setText("stats-fts", fts);
   setText("stats-fts-rate", pct(ftsRate));
 
-  // Advanced: Under/Over 2.5 & BTTS
   const ou = view.over_under || stats.over_under || {};
   setText("stats-over25", ou.over_25 ?? 0);
   setText("stats-under25", ou.under_25 ?? 0);
@@ -339,10 +321,8 @@ function renderStats(stats) {
   setText("stats-under25-rate", pct(ou.under_25_rate ?? 0));
   setText("stats-btts-rate", pct(ou.btts_rate ?? 0));
 
-  // NEW: extra O/U lines
   renderExtraOULines(ou);
 
-  // Form
   const form = (currentView === "overall") ? stats.form : (view.form || {});
   const f5 = form?.last_5 || {};
   const f10 = form?.last_10 || {};
@@ -530,42 +510,146 @@ function renderStandingsTable(rows) {
 })();
 
 /* =========================
-   Predictions (placeholder)
+   Predictions (BASE = rules_v1)
 ========================= */
+let upcomingMatchesCache = [];
+
+function uniqSorted(arr) {
+  return [...new Set(arr.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+function setSelectOptions(selectEl, values, { includeAll = true, allLabel = "Tutte" } = {}) {
+  if (!selectEl) return;
+  const current = selectEl.value;
+  selectEl.innerHTML = "";
+  if (includeAll) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = allLabel;
+    selectEl.appendChild(opt);
+  }
+  values.forEach((v) => {
+    const opt = document.createElement("option");
+    opt.value = String(v);
+    opt.textContent = String(v);
+    selectEl.appendChild(opt);
+  });
+  if ([...selectEl.options].some(o => o.value === current)) selectEl.value = current;
+}
+
+function formatMatchLabel(m) {
+  return `${m.date} — ${m.home_team} vs ${m.away_team} (${m.competition}, ${m.season})`;
+}
+
+function filterUpcomingMatches() {
+  const comp = $("pred-competition")?.value || "";
+  const season = $("pred-season")?.value || "";
+
+  return upcomingMatchesCache.filter((m) => {
+    const okComp = !comp || m.competition === comp;
+    const okSeason = !season || String(m.season) === String(season);
+    return okComp && okSeason;
+  });
+}
+
+function renderPredMatchSelect() {
+  const matchSel = $("pred-match");
+  if (!matchSel) return;
+
+  const filtered = filterUpcomingMatches();
+
+  matchSel.innerHTML = `<option value="">Seleziona match</option>`;
+  filtered.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = String(m.id);
+    opt.textContent = formatMatchLabel(m);
+    matchSel.appendChild(opt);
+  });
+
+  if (!filtered.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Nessun match futuro con questi filtri";
+    matchSel.appendChild(opt);
+  }
+}
+
+function buildPredFiltersFromMatches() {
+  const compSel = $("pred-competition");
+  const seasonSel = $("pred-season");
+
+  const comps = uniqSorted(upcomingMatchesCache.map(m => m.competition));
+  setSelectOptions(compSel, comps, { includeAll: true, allLabel: "Tutte" });
+
+  // NOTA: season è già in HTML (2024/2025), ma teniamolo coerente coi dati presenti
+  const seasons = uniqSorted(upcomingMatchesCache.map(m => String(m.season)));
+  // se vuoi forzare solo [2024,2025] lascia com’è l’HTML e non fare setSelectOptions qui.
+  setSelectOptions(seasonSel, seasons, { includeAll: true, allLabel: "Tutte" });
+
+  renderPredMatchSelect();
+}
+
 async function fetchMatchesForPredictions() {
   const res = await fetch(`${BACKEND_URL}/api/matches`);
   const data = await res.json();
   if (!res.ok) return;
 
-  const matchSel = $("pred-match");
-  if (!matchSel) return;
+  upcomingMatchesCache = Array.isArray(data.matches) ? data.matches : [];
+  buildPredFiltersFromMatches();
+}
 
-  matchSel.innerHTML = `<option value="">Seleziona match</option>`;
+function buildExplanationFromDebug(data) {
+  const r = data?.debug?.ranks || {};
+  const c = data?.debug?.components || {};
 
-  (data.matches || []).forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = `${m.date} — ${m.home_team} vs ${m.away_team} (${m.competition})`;
-    matchSel.appendChild(opt);
-  });
+  const parts = [];
+  if (r && (r.home_rank_before || r.away_rank_before)) {
+    parts.push(`Rank pre-match: Casa ${r.home_rank_before} — Trasferta ${r.away_rank_before} (diff ${r.rank_diff}).`);
+  }
+
+  const compLines = [
+    ["Rank score", c.rank_score],
+    ["Home perf", c.home_perf_score],
+    ["Away perf (sub)", c.away_perf_score_subtracted],
+    ["Vs fascia", c.vs_score],
+    ["Goal score", c.goals_score],
+    ["Forma (last5)", c.form_score],
+    ["Totale", c.home_score_total],
+    ["Draw score", c.draw_score],
+  ].filter(([, v]) => typeof v === "number" && !Number.isNaN(v));
+
+  if (compLines.length) {
+    parts.push("Componenti (punti): " + compLines.map(([k, v]) => `${k}: ${v.toFixed(2)}`).join(" | "));
+  }
+
+  return parts.join("\n");
 }
 
 async function predict() {
   const matchId = $("pred-match")?.value || "";
-  const model = $("pred-model")?.value || "";
+  const uiModel = $("pred-model")?.value || "";
 
   const msg = $("prediction-message");
   if (msg) msg.textContent = "";
 
-  if (!matchId || !model) {
-    if (msg) msg.textContent = "Seleziona match e modello.";
+  if (!matchId || !uiModel) {
+    if (msg) msg.textContent = "Seleziona competizione, stagione, match e modello.";
     return;
   }
+
+  // Solo base è attivo
+  if (uiModel !== "modello_base") {
+    if (msg) msg.textContent = "Questo modello è in arrivo. Usa 'Base'.";
+    return;
+  }
+
+  // Mappa UI -> backend model
+  const backendModel = "rules_v1";
 
   const res = await fetch(`${BACKEND_URL}/api/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ match_id: Number(matchId), model })
+    body: JSON.stringify({ match_id: Number(matchId), model: backendModel })
   });
 
   const data = await res.json();
@@ -587,7 +671,8 @@ async function predict() {
   setBar("prob-draw-bar", draw);
   setBar("prob-away-bar", away);
 
-  setText("prediction-explanation-text", p.explanation || "—");
+  const explanation = buildExplanationFromDebug(data) || "—";
+  setText("prediction-explanation-text", explanation);
 }
 
 (function initPredictions() {
@@ -595,4 +680,9 @@ async function predict() {
 
   const btn = $("predict-button");
   if (btn) btn.addEventListener("click", () => predict().catch(console.error));
+
+  const compSel = $("pred-competition");
+  const seasonSel = $("pred-season");
+  if (compSel) compSel.addEventListener("change", () => renderPredMatchSelect());
+  if (seasonSel) seasonSel.addEventListener("change", () => renderPredMatchSelect());
 })();
