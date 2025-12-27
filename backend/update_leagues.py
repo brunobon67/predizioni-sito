@@ -1,6 +1,7 @@
-import os
+﻿import os
 import requests
-from app import Match, SessionLocal
+from app.models import Match
+from app.db import SessionLocal
 
 API_KEY = os.getenv("FOOTBALL_DATA_API_KEY")
 if not API_KEY:
@@ -35,19 +36,19 @@ def convert_status(api_status: str) -> str:
 
 
 def fetch_matches(league_code: str, season: int):
-    print(f"🔄 Recupero partite per {league_code}, stagione {season}...")
+    print(f"ðŸ”„ Recupero partite per {league_code}, stagione {season}...")
     url = BASE_URL.format(code=league_code)
     params = {"season": season}
 
     try:
         response = requests.get(url, headers=HEADERS, params=params, timeout=30)
     except requests.RequestException as e:
-        print(f"❌ Errore di rete per {league_code} {season}: {e}")
+        print(f"âŒ Errore di rete per {league_code} {season}: {e}")
         return None
 
     if response.status_code != 200:
         print(
-            f"❌ Errore API per {league_code} {season}:",
+            f"âŒ Errore API per {league_code} {season}:",
             response.status_code,
             response.text,
         )
@@ -87,7 +88,7 @@ def import_matches(matches, competition_name: str, season: int):
             home_goals = ft.get("home")
             away_goals = ft.get("away")
 
-        # Cerca per (external_source, external_id) — non per PK interna!
+        # Cerca per (external_source, external_id) â€” non per PK interna!
         db_match = (
             session.query(Match)
             .filter(Match.external_source == EXTERNAL_SOURCE)
@@ -132,7 +133,7 @@ def import_matches(matches, competition_name: str, season: int):
     session.commit()
     session.close()
 
-    print(f"✅ {competition_name} {season} → Inseriti: {inserted} | Aggiornati: {updated}")
+    print(f"âœ… {competition_name} {season} â†’ Inseriti: {inserted} | Aggiornati: {updated}")
 
 
 def main():
@@ -143,12 +144,12 @@ def main():
         for season in SEASONS:
             matches = fetch_matches(code, season)
             if not matches:
-                print(f"⚠️ Nessuna partita per {name} {season}")
+                print(f"âš ï¸ Nessuna partita per {name} {season}")
                 continue
 
             import_matches(matches, name, season)
 
-    print("🏁 Import completato per tutte le leghe e stagioni richieste.")
+    print("ðŸ Import completato per tutte le leghe e stagioni richieste.")
 
 
 if __name__ == "__main__":

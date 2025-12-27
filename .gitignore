@@ -15,3 +15,16 @@ venv/
 __pycache__/
 *.pyc
 
+
+
+# Local DB
+calcio.db
+backend/calcio.db
+
+# Backups / dumps / misc
+*.bak
+backend/*.dump
+backend/*.sql
+
+# Env
+.env
