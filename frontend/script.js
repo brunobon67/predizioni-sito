@@ -9,6 +9,80 @@ const BACKEND_URL = (() => {
 
 const $ = (id) => document.getElementById(id);
 
+/* =========================
+   Global UX helpers
+========================= */
+function showUserMessage(text, type = "info") {
+  // type: info | warn | error | success
+  const el = document.getElementById("global-message");
+  if (el) {
+    el.textContent = text;
+    el.style.display = "block";
+    el.style.padding = "10px 12px";
+    el.style.borderRadius = "10px";
+    el.style.margin = "10px 0";
+    el.style.fontWeight = "700";
+    el.style.lineHeight = "1.2";
+    el.style.border = "1px solid rgba(0,0,0,0.15)";
+    el.style.background =
+      type === "error" ? "rgba(220, 53, 69, 0.12)" :
+      type === "warn"  ? "rgba(255, 193, 7, 0.16)" :
+      type === "success" ? "rgba(25, 135, 84, 0.14)" :
+      "rgba(13, 110, 253, 0.12)";
+    el.style.color =
+      type === "error" ? "#b02a37" :
+      type === "warn" ? "#8a6d1d" :
+      type === "success" ? "#0f5132" :
+      "#084298";
+    return;
+  }
+
+  // fallback
+  alert(text);
+}
+
+function clearUserMessage() {
+  const el = document.getElementById("global-message");
+  if (el) el.style.display = "none";
+}
+
+function withTimeout(ms = 15000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+  return { controller, clear: () => clearTimeout(t) };
+}
+
+async function fetchJSON(url, opts = {}, { timeoutMs = 20000, label = "request" } = {}) {
+  const { controller, clear } = withTimeout(timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (_) {
+      // non-JSON response
+    }
+
+    if (!res.ok) {
+      const msg = (data && (data.error || data.message)) || `${label} failed (${res.status})`;
+      const details = data ? JSON.stringify(data) : "";
+      console.error(`[${label}]`, res.status, url, details);
+      throw new Error(msg);
+    }
+
+    return data;
+  } catch (err) {
+    if (String(err?.name) === "AbortError") {
+      console.error(`[${label}] timeout`, url);
+      throw new Error(`${label}: timeout`);
+    }
+    console.error(`[${label}]`, url, err);
+    throw err;
+  } finally {
+    clear();
+  }
+}
+
 function pct(x) {
   const v = Number(x || 0);
   return `${(v * 100).toFixed(1)}%`;
@@ -70,6 +144,18 @@ function setBar(id, fraction) {
    Helpers: dynamic UI injection
 ========================= */
 function ensureExtraStatsUI() {
+  // Also ensure there is a global message placeholder (optional but helpful)
+  if (!document.getElementById("global-message")) {
+    const statsSection = document.getElementById("stats");
+    if (statsSection) {
+      const div = document.createElement("div");
+      div.id = "global-message";
+      div.style.display = "none";
+      // place it at top of stats section
+      statsSection.insertBefore(div, statsSection.firstChild);
+    }
+  }
+
   const goalsCard = (() => {
     const gf = $("stats-adv-gf");
     if (!gf) return null;
@@ -339,39 +425,75 @@ function renderStats(stats) {
 }
 
 async function fetchTeamsForFilters() {
+  clearUserMessage();
   const competition = $("stats-competition")?.value || "";
   const season = $("stats-season")?.value || "";
   const params = new URLSearchParams();
   if (competition) params.set("competition", competition);
   if (season) params.set("season", season);
 
+  // Primary: /api/teams
   const url = `${BACKEND_URL}/api/teams?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Errore caricando squads");
-  const data = await res.json();
 
-  const sel = $("stats-team");
-  if (!sel) return;
-  const current = sel.value;
+  try {
+    const data = await fetchJSON(url, {}, { label: "fetch teams", timeoutMs: 20000 });
 
-  sel.innerHTML = `<option value="">Seleziona squadra</option>`;
-  (data.teams || []).forEach((t) => {
-    const opt = document.createElement("option");
-    opt.value = t;
-    opt.textContent = t;
-    sel.appendChild(opt);
-  });
+    const sel = $("stats-team");
+    if (!sel) return;
+    const current = sel.value;
 
-  if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+    sel.innerHTML = `<option value="">Seleziona squadra</option>`;
+    (data.teams || []).forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+
+    if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+    return;
+  } catch (e) {
+    console.warn("fetchTeamsForFilters primary failed:", e);
+  }
+
+  // Fallback: derive teams from /api/matches (UPCOMING cache)
+  try {
+    const matchesData = await fetchJSON(`${BACKEND_URL}/api/matches`, {}, { label: "fallback matches", timeoutMs: 20000 });
+    const matches = Array.isArray(matchesData.matches) ? matchesData.matches : [];
+    const teams = new Set();
+
+    for (const m of matches) {
+      if (competition && m.competition !== competition) continue;
+      if (season && String(m.season) !== String(season)) continue;
+      if (m.home_team) teams.add(m.home_team);
+      if (m.away_team) teams.add(m.away_team);
+    }
+
+    const sel = $("stats-team");
+    if (!sel) return;
+
+    sel.innerHTML = `<option value="">Seleziona squadra</option>`;
+    [...teams].sort((a, b) => String(a).localeCompare(String(b))).forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+
+    showUserMessage("⚠️ /api/teams non disponibile: ho caricato le squadre da /api/matches (fallback).", "warn");
+  } catch (e) {
+    showUserMessage("❌ Impossibile caricare le squadre (backend non raggiungibile o CORS).", "error");
+  }
 }
 
 async function fetchStats() {
+  clearUserMessage();
   const competition = $("stats-competition")?.value || "";
   const season = $("stats-season")?.value || "";
   const team = $("stats-team")?.value || "";
 
   if (!team) {
-    alert("Seleziona una squadra.");
+    showUserMessage("Seleziona una squadra.", "warn");
     return;
   }
 
@@ -381,16 +503,15 @@ async function fetchStats() {
   if (season) params.set("season", season);
 
   const url = `${BACKEND_URL}/api/stats?${params.toString()}`;
-  const res = await fetch(url);
-  const data = await res.json();
 
-  if (!res.ok) {
-    alert(data?.error || "Errore nel calcolo statistiche");
-    return;
+  try {
+    const data = await fetchJSON(url, {}, { label: "fetch stats", timeoutMs: 25000 });
+    lastStatsPayload = data;
+    renderStats(lastStatsPayload);
+    showUserMessage("✅ Statistiche aggiornate.", "success");
+  } catch (e) {
+    showUserMessage(`❌ Statistiche non disponibili: ${e.message}`, "error");
   }
-
-  lastStatsPayload = data;
-  renderStats(lastStatsPayload);
 }
 
 function setStatsView(view) {
@@ -412,9 +533,9 @@ function setStatsView(view) {
   const season = $("stats-season");
   const btn = $("stats-button");
 
-  if (comp) comp.addEventListener("change", () => fetchTeamsForFilters().catch(console.error));
-  if (season) season.addEventListener("change", () => fetchTeamsForFilters().catch(console.error));
-  if (btn) btn.addEventListener("click", () => fetchStats().catch(console.error));
+  if (comp) comp.addEventListener("change", () => fetchTeamsForFilters());
+  if (season) season.addEventListener("change", () => fetchTeamsForFilters());
+  if (btn) btn.addEventListener("click", () => fetchStats());
 
   const bOverall = $("view-overall");
   const bHome = $("view-home");
@@ -424,33 +545,32 @@ function setStatsView(view) {
   if (bHome) bHome.addEventListener("click", () => setStatsView("home"));
   if (bAway) bAway.addEventListener("click", () => setStatsView("away"));
 
-  fetchTeamsForFilters().catch(console.error);
+  fetchTeamsForFilters();
 })();
 
 /* =========================
    Standings
 ========================= */
 async function fetchStandings() {
+  clearUserMessage();
   const competition = $("standings-competition")?.value || "";
   const season = $("standings-season")?.value || "";
   const date = $("standings-date")?.value || "";
 
   if (!competition || !season || !date) {
-    alert("Seleziona competizione, stagione e data.");
+    showUserMessage("Seleziona competizione, stagione e data.", "warn");
     return;
   }
 
   const params = new URLSearchParams({ competition, season, date });
   const url = `${BACKEND_URL}/api/standings?${params.toString()}`;
 
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) {
-    alert(data?.error || "Errore nel caricamento classifica");
-    return;
+  try {
+    const data = await fetchJSON(url, {}, { label: "fetch standings", timeoutMs: 25000 });
+    renderStandingsTable(data.standings || []);
+  } catch (e) {
+    showUserMessage(`❌ Classifica non disponibile: ${e.message}`, "error");
   }
-
-  renderStandingsTable(data.standings || []);
 }
 
 function renderStandingsTable(rows) {
@@ -506,7 +626,7 @@ function renderStandingsTable(rows) {
 
 (function initStandings() {
   const btn = $("standings-button");
-  if (btn) btn.addEventListener("click", () => fetchStandings().catch(console.error));
+  if (btn) btn.addEventListener("click", () => fetchStandings());
 })();
 
 /* =========================
@@ -581,21 +701,21 @@ function buildPredFiltersFromMatches() {
   const comps = uniqSorted(upcomingMatchesCache.map(m => m.competition));
   setSelectOptions(compSel, comps, { includeAll: true, allLabel: "Tutte" });
 
-  // NOTA: season è già in HTML (2024/2025), ma teniamolo coerente coi dati presenti
   const seasons = uniqSorted(upcomingMatchesCache.map(m => String(m.season)));
-  // se vuoi forzare solo [2024,2025] lascia com’è l’HTML e non fare setSelectOptions qui.
   setSelectOptions(seasonSel, seasons, { includeAll: true, allLabel: "Tutte" });
 
   renderPredMatchSelect();
 }
 
 async function fetchMatchesForPredictions() {
-  const res = await fetch(`${BACKEND_URL}/api/matches`);
-  const data = await res.json();
-  if (!res.ok) return;
-
-  upcomingMatchesCache = Array.isArray(data.matches) ? data.matches : [];
-  buildPredFiltersFromMatches();
+  clearUserMessage();
+  try {
+    const data = await fetchJSON(`${BACKEND_URL}/api/matches`, {}, { label: "fetch matches", timeoutMs: 25000 });
+    upcomingMatchesCache = Array.isArray(data.matches) ? data.matches : [];
+    buildPredFiltersFromMatches();
+  } catch (e) {
+    showUserMessage(`❌ Impossibile caricare i match futuri: ${e.message}`, "error");
+  }
 }
 
 function buildExplanationFromDebug(data) {
@@ -626,6 +746,7 @@ function buildExplanationFromDebug(data) {
 }
 
 async function predict() {
+  clearUserMessage();
   const matchId = $("pred-match")?.value || "";
   const uiModel = $("pred-model")?.value || "";
 
@@ -637,49 +758,46 @@ async function predict() {
     return;
   }
 
-  // Solo base è attivo
   if (uiModel !== "modello_base") {
     if (msg) msg.textContent = "Questo modello è in arrivo. Usa 'Base'.";
     return;
   }
 
-  // Mappa UI -> backend model
   const backendModel = "rules_v1";
 
-  const res = await fetch(`${BACKEND_URL}/api/predict`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ match_id: Number(matchId), model: backendModel })
-  });
+  try {
+    const data = await fetchJSON(`${BACKEND_URL}/api/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ match_id: Number(matchId), model: backendModel })
+    }, { label: "predict", timeoutMs: 25000 });
 
-  const data = await res.json();
-  if (!res.ok) {
-    if (msg) msg.textContent = data?.error || "Errore previsione";
-    return;
+    const p = data?.probabilities || {};
+    const home = Number(p.home_win || 0);
+    const draw = Number(p.draw || 0);
+    const away = Number(p.away_win || 0);
+
+    setText("prob-home", `${(home * 100).toFixed(1)} %`);
+    setText("prob-draw", `${(draw * 100).toFixed(1)} %`);
+    setText("prob-away", `${(away * 100).toFixed(1)} %`);
+
+    setBar("prob-home-bar", home);
+    setBar("prob-draw-bar", draw);
+    setBar("prob-away-bar", away);
+
+    const explanation = buildExplanationFromDebug(data) || "—";
+    setText("prediction-explanation-text", explanation);
+  } catch (e) {
+    if (msg) msg.textContent = `Errore previsione: ${e.message}`;
+    showUserMessage(`❌ Previsione non disponibile: ${e.message}`, "error");
   }
-
-  const p = data?.probabilities || {};
-  const home = Number(p.home_win || 0);
-  const draw = Number(p.draw || 0);
-  const away = Number(p.away_win || 0);
-
-  setText("prob-home", `${(home * 100).toFixed(1)} %`);
-  setText("prob-draw", `${(draw * 100).toFixed(1)} %`);
-  setText("prob-away", `${(away * 100).toFixed(1)} %`);
-
-  setBar("prob-home-bar", home);
-  setBar("prob-draw-bar", draw);
-  setBar("prob-away-bar", away);
-
-  const explanation = buildExplanationFromDebug(data) || "—";
-  setText("prediction-explanation-text", explanation);
 }
 
 (function initPredictions() {
-  fetchMatchesForPredictions().catch(console.error);
+  fetchMatchesForPredictions();
 
   const btn = $("predict-button");
-  if (btn) btn.addEventListener("click", () => predict().catch(console.error));
+  if (btn) btn.addEventListener("click", () => predict());
 
   const compSel = $("pred-competition");
   const seasonSel = $("pred-season");
